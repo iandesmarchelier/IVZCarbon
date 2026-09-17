@@ -1,0 +1,9 @@
+{
+  "rewrites": [{"source": "/(.*)", "destination": "/api/index"}],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 120,
+      "excludeFiles": "{.deps/**,.venv/**,tests/**,scripts/**,data/**,**/__pycache__/**}"
+    }
+  }
+}

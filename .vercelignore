@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+.venv
+.deps
+data
+tests
+scripts
+**/__pycache__
+*.pyc
+*.sqlite*
+*.dump
+Dockerfile
+compose.yaml
+*.ps1
