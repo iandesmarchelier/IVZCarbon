@@ -27,6 +27,17 @@
   function snapshot(){return {schemaVersion:1,...arrays,BIZ,PLACES,settings:{uqOverrides:S.uqOverrides,uqAudit:S.uqAudit,recentImports:S.recentImports},counters:{RID,MOVN,MDN,UID},demoRecordIds,demoMovementIds,mappingProfiles};}
   const originalDemo=clone(snapshot());
   let company='IVZ Carbon';
+  let username='';
+  document.getElementById('btn-user').onclick=()=>{
+    openModal('<div class="modal-h"><h3>Configuración de la cuenta</h3></div><div class="modal-b"><p><b>Usuario</b><br>'+esc(username)+'</p><p><b>Organización</b><br>'+esc(company)+'</p><p id="account-error" role="alert"></p></div><div class="modal-f"><button class="btn" onclick="closeModal()">Volver</button><button class="btn" id="account-logout">Cerrar sesión</button></div>',{narrow:true});
+    document.getElementById('account-logout').onclick=async event=>{
+      const button=event.currentTarget;button.disabled=true;
+      try{
+        if(!await save()){button.disabled=false;return;}
+        await api('/api/logout',{method:'POST'});ready=false;location.replace('/');
+      }catch(e){button.disabled=false;document.getElementById('account-error').textContent=e.message;}
+    };
+  };
   const originalRender=render;
   render=function(){
     originalRender();
@@ -84,6 +95,10 @@
     try{
       const [result,user]=await Promise.all([api('/api/state'),api('/api/me')]);
       company=user.company;
+      username=user.username;
+      document.getElementById('profile-name').textContent=username;
+      document.getElementById('profile-company').textContent=company;
+      document.getElementById('profile-avatar').textContent=username.slice(0,2).toUpperCase();
       if(result.state){activate(result);return;}
       gate.innerHTML='<section style="max-width:510px;background:white;border-radius:16px;padding:36px"><h1>Tu inventario de carbono</h1><p>Elegí cómo empezar. La biblioteca de factores de referencia queda disponible en ambas opciones.</p><button class="btn primary" id="carbon-empty">Empezar vacío</button> <button class="btn" id="carbon-demo">Explorar con datos demo</button><p id="carbon-init-error" role="alert"></p></section>';
       for(const mode of ['empty','demo'])document.getElementById('carbon-'+mode).onclick=async()=>{for(const b of gate.querySelectorAll('button'))b.disabled=true;try{activate(await api('/api/initialize',{method:'POST',body:JSON.stringify({mode})}))}catch(e){document.getElementById('carbon-init-error').textContent=e.message;for(const b of gate.querySelectorAll('button'))b.disabled=false;}};
