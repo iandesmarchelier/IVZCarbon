@@ -57,6 +57,24 @@ def account(request):
     return dict(row)
 
 
+def account_by_token(request):
+    """Server-to-server auth for read-only cross-app endpoints (e.g. IVZ Sustainability Hub)."""
+    header = request.headers.get('authorization', '')
+    token = header[7:] if header.lower().startswith('bearer ') else ''
+    if not token:
+        return None
+    with db() as s:
+        row = s.execute('SELECT a.id,a.username,a.company FROM carbon_accounts a JOIN carbon_api_tokens t ON t.account=a.id WHERE t.token_hash=?',
+                        (token_hash(token),)).fetchone()
+        if row:
+            s.execute('UPDATE carbon_api_tokens SET last_used=? WHERE token_hash=?', (datetime.now(timezone.utc).isoformat(), token_hash(token)))
+    return dict(row) if row else None
+
+
+def account_flexible(request):
+    return account_by_token(request) or account(request)
+
+
 def event(s, user, action, revision, details):
     s.execute('INSERT INTO carbon_events VALUES (?,?,?,?,?,?)',
               (str(uuid.uuid4()), user, action, revision, datetime.now(timezone.utc).isoformat(), s.json(details)))
@@ -200,10 +218,54 @@ def start(body: Start, request: Request):
 
 @app.get('/api/summary')
 def summary(request: Request, year: int | None = None, site: str | None = None):
-    state = load(account(request)['id'])['state']
+    state = load(account_flexible(request)['id'])['state']
     if not state:
         raise HTTPException(404, 'Inicializá el inventario.')
     return compute(state, year, site)
+
+
+class TokenCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+
+
+@app.post('/api/tokens')
+def create_token(body: TokenCreate, request: Request):
+    user = account(request)
+    token = 'ivzc_' + secrets.token_urlsafe(32)
+    with db() as s:
+        s.execute('INSERT INTO carbon_api_tokens VALUES (?,?,?,?,?,?)',
+                  (str(uuid.uuid4()), user['id'], body.label.strip(), token_hash(token), datetime.now(timezone.utc).isoformat(), None))
+    return {'token': token}
+
+
+@app.get('/api/tokens')
+def list_tokens(request: Request):
+    user = account(request)
+    with db() as s:
+        rows = s.execute('SELECT id,label,created,last_used FROM carbon_api_tokens WHERE account=? ORDER BY created DESC', (user['id'],)).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.delete('/api/tokens/{token_id}')
+def revoke_token(token_id: str, request: Request):
+    user = account(request)
+    with db() as s:
+        s.execute('DELETE FROM carbon_api_tokens WHERE id=? AND account=?', (token_id, user['id']))
+    return {'ok': True}
+
+
+@app.get('/api/link/sites')
+def link_sites(request: Request):
+    state = load(account_flexible(request)['id'])['state']
+    if not state:
+        return []
+    return [{'id': s['id'], 'name': s['name'], 'country': s.get('country', ''), 'cc': s.get('cc', '')} for s in state['SITES']]
+
+
+@app.get('/api/link/periods')
+def link_periods(request: Request):
+    state = load(account_flexible(request)['id'])['state']
+    return (state or {}).get('PERIODS', [])
 
 
 @app.get('/api/records')

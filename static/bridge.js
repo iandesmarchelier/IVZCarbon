@@ -69,6 +69,7 @@
     if(!r.ok){let body;try{body=await r.json()}catch{body={detail:await r.text().catch(()=>r.statusText)}}const e=Error(typeof body.detail==='string'?body.detail:'La solicitud contiene datos inválidos.');e.status=r.status;throw e;}
     return r.json();
   }
+  window.api=api;
   function download(value,name){const a=document.createElement('a');const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
   let pendingSave=null;
   async function save(){

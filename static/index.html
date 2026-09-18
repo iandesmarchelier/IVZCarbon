@@ -3624,7 +3624,8 @@ V.integraciones=f=>{
    ['Encuesta de movilidad (RRHH)','survey','Formulario','Manual','—',['Distribución modal del traslado casa-trabajo — depende de que el colaborador responda la encuesta','Jornadas en modalidad remota'],'rrhh'],
    ['GMAO / service técnico — mantenimiento','service','—','Sin conectar','—',['Horas de máquina reales, para reemplazar la estimación por factor de carga','Recarga de refrigerantes por fuga (hoy se asienta a mano desde el remito del service)'],null],
   ];
-  return head('Integraciones ERP','De dónde sale cada dato y qué agrega la plataforma. IVZ Carbon no pide volver a cargar información: lee lo que ya existe en el ERP y en los sistemas operativos, y lo convierte en inventario de carbono.',
+  return carbonTokenCard()
+  +head('Integraciones ERP','De dónde sale cada dato y qué agrega la plataforma. IVZ Carbon no pide volver a cargar información: lee lo que ya existe en el ERP y en los sistemas operativos, y lo convierte en inventario de carbono.',
     `<button class="btn" onclick="go('datacenter')">Carga por Excel →</button>`)
   +`<div class="card" data-tour="int-flow"><div class="card-h"><h3>Del documento del ERP al inventario GHG</h3><div class="sub">mismo dato de origen, sin recarga manual</div></div>
     <div class="card-b"><div class="pipeline">
@@ -3669,6 +3670,64 @@ V.integraciones=f=>{
      </div>
    </div>`;
 };
+
+/* ---------------- Token de acceso para IVZ Sustainability Hub ----------- */
+let CARBON_TOKENS=null;
+function loadCarbonTokens(){
+  window.api('/api/tokens').then(list=>{CARBON_TOKENS=list;if(S.view==='integraciones')render();}).catch(()=>{CARBON_TOKENS=[];if(S.view==='integraciones')render();});
+}
+function carbonTokenCard(){
+  if(CARBON_TOKENS===null){CARBON_TOKENS=[];loadCarbonTokens();}
+  const rows=CARBON_TOKENS.map(t=>`<tr><td class="strong">${esc(t.label)}</td>
+    <td class="tiny dim">${esc(new Date(t.created).toLocaleDateString('es-AR'))}</td>
+    <td class="tiny dim">${t.last_used?esc(new Date(t.last_used).toLocaleDateString('es-AR')):'Nunca'}</td>
+    <td class="r"><button class="btn sm ghost" onclick='confirmRevokeCarbonToken(${JSON.stringify(t.id)},${JSON.stringify(t.label)})'>Revocar</button></td></tr>`).join('');
+  return `<div class="card" style="margin-bottom:16px"><div class="card-h">
+    <div style="width:30px;height:30px;border-radius:8px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ico('leaf')}</div>
+    <h3 style="flex:1">IVZ Sustainability Hub</h3><span class="pill accent">Integración nativa</span></div>
+    <div class="card-b">
+    <p class="tiny dim" style="margin:0 0 12px">Generá un token para que IVZ Sustainability Hub lea el inventario corporativo (Alcance 1, 2 y 3 por sitio y período) de esta cuenta, sin volver a cargar los datos a mano.</p>
+    ${CARBON_TOKENS.length?`<div class="tblwrap"><table><thead><tr><th>Token</th><th>Creado</th><th>Último uso</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p class="tiny dim">Todavía no generaste ningún token.</p>'}
+    <button class="btn primary mt" onclick="openCarbonTokenForm()">Generar token</button>
+    </div></div>`;
+}
+function openCarbonTokenForm(){
+  openModal(`<div class="modal-h"><div style="flex:1"><h3>Generar token</h3><div class="sub">Para IVZ Sustainability Hub</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
+   <div class="modal-b">
+     <div class="form-row"><label>Nombre del token</label><input id="carbon-token-label" placeholder="IVZ Sustainability Hub" value="IVZ Sustainability Hub"></div>
+     <div class="note">Da acceso de sólo lectura al inventario de GEI (Alcance 1/2/3 por sitio y período). No permite modificar datos de IVZ Carbon.</div>
+   </div>
+   <div class="modal-f"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="carbonTokenSubmit()">Generar</button></div>`,{narrow:true});
+}
+async function carbonTokenSubmit(){
+  const label=document.getElementById('carbon-token-label').value.trim()||'IVZ Sustainability Hub';
+  const button=document.querySelector('#mscrim .modal-f .btn.primary');
+  if(button)button.disabled=true;
+  try{
+    const {token}=await window.api('/api/tokens',{method:'POST',body:JSON.stringify({label})});
+    loadCarbonTokens();
+    openModal(`<div class="modal-h"><div style="flex:1"><h3>Token generado</h3><div class="sub">Copialo ahora: no se vuelve a mostrar</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
+     <div class="modal-b">
+       <div class="form-row"><input id="carbon-token-value" readonly value="${esc(token)}" style="font-family:monospace;font-size:12px"></div>
+       <div class="note">Pegalo en IVZ Sustainability Hub, en Integraciones → IVZ Carbon → Conectar.</div>
+     </div>
+     <div class="modal-f"><button class="btn" onclick="closeModal()">Cerrar</button><button class="btn primary" onclick="carbonTokenCopy()">Copiar</button></div>`,{narrow:true});
+  }catch(e){toast(e.message,'⚠');if(button)button.disabled=false;}
+}
+function carbonTokenCopy(){
+  const input=document.getElementById('carbon-token-value');
+  input.select();
+  (navigator.clipboard?.writeText(input.value)||Promise.reject()).then(()=>toast('Token copiado.')).catch(()=>{});
+}
+function confirmRevokeCarbonToken(id,label){
+  openModal(`<div class="modal-h"><div style="flex:1"><h3>Revocar token</h3><div class="sub">${esc(label)}</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
+   <div class="modal-b"><p>IVZ Sustainability Hub va a dejar de poder sincronizar datos con este token. Esta acción no se puede deshacer.</p></div>
+   <div class="modal-f"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="revokeCarbonToken(${JSON.stringify(id)})">Revocar</button></div>`,{narrow:true});
+}
+async function revokeCarbonToken(id){
+  try{await window.api('/api/tokens/'+encodeURIComponent(id),{method:'DELETE'});closeModal();loadCarbonTokens();toast('Token revocado.');}
+  catch(e){toast(e.message,'⚠');}
+}
 
 /* ---------------------- 9. Factores de emisión -------------------------- */
 V.factores=f=>{

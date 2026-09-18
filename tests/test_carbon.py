@@ -122,6 +122,25 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(rows),1)
         self.assertTrue(verify_password('first-password-123',rows[0]['password']))
 
+    def test_api_token_link_endpoints(self):
+        self.login(); self.initialize()
+        token = self.client.post('/api/tokens', headers=self.h, json={'label': 'IVZ Sustainability Hub'}).json()['token']
+        listed = self.client.get('/api/tokens', headers=self.h).json()
+        self.assertEqual(len(listed), 1)
+        self.assertNotIn('token', listed[0])
+        auth = {'Authorization': 'Bearer ' + token}
+        self.assertEqual(self.client.get('/api/summary', headers=auth).status_code, 200)
+        sites = self.client.get('/api/link/sites', headers=auth).json()
+        self.assertEqual({s['id'] for s in sites}, {s['id'] for s in SEED['SITES']})
+        self.assertEqual(self.client.get('/api/link/periods', headers=auth).json(), SEED['PERIODS'])
+        with TestClient(app) as anon:
+            # A read token (no session cookie) must not grant write access to mutating endpoints.
+            self.assertEqual(anon.put('/api/state', headers={**self.h, **auth}, json={'revision': 1, 'state': {}}).status_code, 401)
+            self.assertEqual(anon.get('/api/summary', headers=auth).status_code, 200)
+            self.assertEqual(anon.get('/api/summary').status_code, 401)
+            self.client.delete('/api/tokens/' + listed[0]['id'], headers=self.h)
+            self.assertEqual(anon.get('/api/summary', headers=auth).status_code, 401)
+
     def test_vercel_database_configuration(self):
         with patch.dict(os.environ, {'VERCEL':'1','DATABASE_URL':'postgresql://integration-test'}):
             self.assertEqual(database_url(),'postgresql://integration-test')
