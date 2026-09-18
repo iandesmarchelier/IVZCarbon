@@ -8,8 +8,12 @@
   let demoRecordIds=REC.map(r=>r.rid), demoMovementIds=MOV.map(m=>m.id);
   const clone=x=>JSON.parse(JSON.stringify(x));
   const gate=document.createElement('div');
-  gate.style.cssText='position:fixed;inset:0;z-index:190;background:#f2f5f0;display:grid;place-items:center;color:#234c3b;font:16px system-ui';
-  gate.textContent='Cargando IVZ Carbon…';document.body.append(gate);
+  gate.style.cssText='position:fixed;inset:0;z-index:190;background:#f2f5f0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#173d35;font:16px system-ui';
+  const gateLogo=document.querySelector('.mark img')?.cloneNode(true);
+  if(gateLogo){gateLogo.style.cssText='height:64px;width:auto;animation:boot-pulse 1.4s ease-in-out infinite';gate.append(gateLogo);}
+  const gateName=document.createElement('div');gateName.style.cssText='font:600 15px system-ui;letter-spacing:.2px';gateName.textContent='Cargando IVZ Carbon…';gate.append(gateName);
+  if(!document.getElementById('boot-pulse-style')){const style=document.createElement('style');style.id='boot-pulse-style';style.textContent='@keyframes boot-pulse{0%,100%{opacity:.4;transform:scale(.92)}50%{opacity:1;transform:scale(1)}}';document.head.append(style);}
+  document.body.append(gate);
   let lastSaveError='';
   function showSaveError(text){
     if(text===lastSaveError)return;
