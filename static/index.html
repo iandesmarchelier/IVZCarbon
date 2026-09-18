@@ -95,6 +95,7 @@ nav{padding:6px 10px 20px;flex:1}
 .account-copy{flex:1;min-width:0;text-align:left}
 .account-name{display:block;color:#DFEAE2;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .account-company{display:block;color:#93A899;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}
+.tenant-caption{display:block;margin-top:10px;color:#93A899;font-size:10px;line-height:1.5;text-align:center;font-weight:400}
 .tour-entry:focus-visible,.side-user:focus-visible{outline:2px solid #CFE3D5;outline-offset:3px}
 
 /* ---------- CABECERA ---------- */
@@ -1500,6 +1501,7 @@ table.invtbl tr.scoperow>td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
     <div class="sidefoot">
       <button class="tour-entry" id="btn-tour" onclick="tourStart()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4Z"/></svg>Demo guiada</button>
       <button class="side-user" id="btn-user" aria-label="Configuración de la cuenta" title="Configuración"><span class="account-avatar" id="profile-avatar"></span><span class="account-copy"><span class="account-name" id="profile-name"></span><span class="account-company" id="profile-company"></span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 3-.6 2.2-2 .9-2-.6L2 9l1.5 1.7v2.6L2 15l2.4 3.5 2-.6 2 .9L9 21h6l.6-2.2 2-.9 2 .6L22 15l-1.5-1.7v-2.6L22 9l-2.4-3.5-2 .6-2-.9L15 3Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <small class="tenant-caption">Sistema Tenant - IVZ Sustainability</small>
     </div>
   </aside>
   <div class="main">
