@@ -3703,7 +3703,7 @@ function carbonTokenCopy(){
 function confirmRevokeCarbonToken(id,label){
   openModal(`<div class="modal-h"><div style="flex:1"><h3>Revocar token</h3><div class="sub">${esc(label)}</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
    <div class="modal-b"><p>IVZ Sustainability Hub va a dejar de poder sincronizar datos con este token. Esta acción no se puede deshacer.</p></div>
-   <div class="modal-f"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="revokeCarbonToken(${JSON.stringify(id)})">Revocar</button></div>`,{narrow:true});
+   <div class="modal-f"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick='revokeCarbonToken(${JSON.stringify(id)})'>Revocar</button></div>`,{narrow:true});
 }
 async function revokeCarbonToken(id){
   try{await window.api('/api/tokens/'+encodeURIComponent(id),{method:'DELETE'});closeModal();loadCarbonTokens();toast('Token revocado.');}
