@@ -304,6 +304,9 @@ tfoot td{border-top:1px solid var(--line-2);border-bottom:none;font-weight:600;b
 
 /* ---------- AVISOS ---------- */
 .note{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px;font-size:12.5px;color:var(--ink-2)}
+@keyframes docspin{to{transform:rotate(360deg)}}
+.note.reading{display:flex;align-items:center;gap:8px}
+.note.reading .spin-ic{display:inline-flex;animation:docspin .9s linear infinite;color:var(--accent)}
 .note.warn{background:var(--warn-soft);border-color:var(--warn-line);color:#6B4808}
 .alert{display:flex;gap:11px;padding:11px 13px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface-2);margin-bottom:9px}
 .alert:last-child{margin-bottom:0}
@@ -3796,9 +3799,11 @@ V.acerca=f=>{
    ['Movimientos de insumos','Tramos, pesos, distancias y t·km reales del modelo; el mapa, los filtros y el cálculo responden a los mismos datos.'],
    ['Regla de no duplicación','El transporte con flota propia se reconoce en Alcance 1 y queda excluido de la Categoría 4.'],
    ['Trazabilidad','Los nueve bloques de la cadena se arman desde el propio registro: el recorrido es real dentro del prototipo.'],
-   ['Filtros e indicadores','Período, sitio, alcance, categoría, intensidades y KPIs se recalculan sobre los registros.']];
+   ['Filtros e indicadores','Período, sitio, alcance, categoría, intensidades y KPIs se recalculan sobre los registros.'],
+   ['Lectura de facturas de electricidad y gas','Subir el PDF real de una factura de Edenor, UTE o Metrogas extrae los datos del documento (texto embebido o, si no lo tiene, OCR con Tesseract) sin ningún modelo de lenguaje de por medio, y los deja para revisar antes de confirmar. "Usar una factura de ejemplo" sigue siendo un dato simulado, para probar el flujo sin archivo.']];
   const sim=[['Datos de la empresa','Sitios, consumos, compras y movimientos son ficticios, generados de forma determinística.'],
-   ['Lectura de facturas y manifiestos','La extracción de datos del PDF o la foto está simulada: los valores que aparecen para revisar son generados, no leídos del archivo. El cálculo posterior es real una vez que se confirman.'],
+   ['Lectura de manifiestos de residuos','Todavía no hay un proveedor de referencia: la lectura es un parser genérico y sus valores se marcan de confianza baja. Revisalos siempre antes de confirmar.'],
+   ['OCR en producción','Tesseract (el motor de OCR) no está instalado en el hosting actual (Vercel). Ahí, una factura sin texto embebido en el PDF (ej. Edenor, Metrogas) pide completar los datos a mano; en desarrollo local o self-hosted con el Dockerfile del repo, la lectura es completa.'],
    ['Integraciones','Los conectores no se conectan a ningún sistema: simulan lo que llegaría de un ERP, un TMS o un portal de residuos.'],
    ['Reglas de clasificación','El motor de reglas está simulado en el navegador: la condición y el nivel de confianza son ilustrativos.'],
    ['Carga de Excel','El asistente lee el archivo y valida las filas, pero el alta se hace sobre los datos en memoria de esta sesión.'],
@@ -3810,7 +3815,8 @@ V.acerca=f=>{
    'Definir el umbral de confianza y el flujo de revisión y aprobación mensual del inventario.',
    'Validar el catálogo de factores, su procedimiento de actualización y el criterio de factor residual para Alcance 2.',
    'Definir el tratamiento de los movimientos con flota propia en el maestro de vehículos.',
-   'Elegir el proveedor de lectura de documentos (OCR) para facturas y manifiestos, y el flujo de revisión antes de confirmar cada carga.'];
+   'Migrar el hosting de producción a un contenedor (ya existe el Dockerfile) para que el OCR con Tesseract funcione también ahí, no solo en desarrollo o self-host.',
+   'Conseguir manifiestos de residuos reales de al menos un operador para reemplazar el parser genérico por uno específico, como ya se hizo con Edenor, UTE y Metrogas.'];
   const box=(t3,items)=>`<div class="card"><div class="card-h"><h3>${t3}</h3></div><div class="card-b tight">
     <table><tbody>${items.map(([a,b])=>`<tr><td style="width:34%" class="strong">${a}</td><td class="dim">${b}</td></tr>`).join('')}</tbody></table></div></div>`;
   return head('Alcance del prototipo','Qué es funcional y qué está simulado, para que la demostración no genere expectativas equivocadas.','')
@@ -3996,11 +4002,17 @@ function locCard(site,a1,a2,invs,missing,curP){
 }
 
 /* ------------------------------ modal: factura ---------------------------- */
-S.inv = {step:1,siteId:null,kind:null,fileName:null,period:null,qty:0,provider:'',doc:''};
+async function uploadDocument(path,formData){
+  const r=await fetch(path,{method:'POST',headers:{'X-IVZ-Carbon':'1'},body:formData});
+  if(!r.ok){let body;try{body=await r.json()}catch{body={detail:await r.text().catch(()=>r.statusText)}}throw new Error(typeof body.detail==='string'?body.detail:'La solicitud contiene datos inválidos.');}
+  return r.json();
+}
+S.inv = {step:1,siteId:null,kind:null,fileName:null,period:null,qty:0,provider:'',doc:'',simulated:true,reading:false,readMessage:''};
 function openInvoiceModal(siteId,kind){
   const site=SBI[siteId];
   S.inv = {step:1,siteId,kind,fileName:null,period:nextInvoicePeriod(siteId,kind),qty:invSimQty(site,kind),
-    provider:kind==='elec'?(site.cc==='UY'?'UTE':'Edenor'):(site.cc==='UY'?'UTE':'Metrogas'),doc:''};
+    provider:kind==='elec'?(site.cc==='UY'?'UTE':'Edenor'):(site.cc==='UY'?'UTE':'Metrogas'),doc:'',
+    simulated:true,reading:false,readMessage:''};
   openModal(invModalHTML());
 }
 function invRerender(){ const m=document.querySelector('#mscrim .modal'); if(m) m.innerHTML=invModalHTML(); }
@@ -4014,14 +4026,29 @@ function invSimQty(site,kind){
                               : (site.type==='Oficina'?160:110);
   return Math.round(base*(0.85+Math.random()*0.3));
 }
-function invPickFile(input){
+async function invPickFile(input){
   const f=input.files&&input.files[0]; if(!f) return;
-  S.inv.fileName=f.name; if(!S.inv.doc) S.inv.doc='FC-'+Math.floor(1000+Math.random()*8999);
+  S.inv.fileName=f.name; S.inv.simulated=false; S.inv.reading=true; S.inv.readMessage='';
+  if(!S.inv.doc) S.inv.doc='FC-'+Math.floor(1000+Math.random()*8999);
   S.inv.step=2; invRerender();
+  try{
+    const fd=new FormData(); fd.append('kind',S.inv.kind); fd.append('file',f,f.name);
+    const result=await uploadDocument('/api/parse-document',fd);
+    const d=result.fields||{};
+    if(d.provider) S.inv.provider=d.provider;
+    if(d.period){ ensurePeriod(d.period); S.inv.period=d.period; }
+    if(d.qty) S.inv.qty=d.qty;
+    if(d.doc) S.inv.doc=d.doc;
+    S.inv.readMessage=result.message||'';
+  }catch(e){
+    S.inv.readMessage='No se pudo leer el documento: '+e.message;
+  }
+  S.inv.reading=false; invRerender();
 }
 function invUseSample(){
   S.inv.fileName=(S.inv.kind==='elec'?'factura_electricidad_':'factura_gas_')+S.inv.period+'.pdf';
   if(!S.inv.doc) S.inv.doc='FC-'+Math.floor(1000+Math.random()*8999);
+  S.inv.simulated=true; S.inv.readMessage='';
   S.inv.step=2; invRerender();
 }
 function invBack(){ S.inv.step=1; invRerender(); }
@@ -4048,9 +4075,12 @@ function invModalHTML(){
       <div class="note mt">La lectura del documento es simulada. En el paso siguiente vas a revisar los datos y poder corregirlos antes de confirmar.</div>
     </div>`;
   }
+  const invNote = S.inv.reading ? `<div class="note reading"><span class="spin-ic">${ico('gear')}</span> Leyendo el documento…</div>`
+    : S.inv.simulated ? `<div class="note">${ico('info')} Lectura automática (simulada) — revisá los valores antes de confirmar.</div>`
+    : `<div class="note">${ico('info')} ${esc(S.inv.readMessage||'Revisá los valores antes de confirmar.')}</div>`;
   return `<div class="modal-h"><div style="flex:1"><h3>Revisá los datos detectados</h3><div class="sub">${esc(site.name)} · ${esc(S.inv.fileName||'')}</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
   <div class="modal-b">
-    <div class="note">${ico('info')} Lectura automática (simulada) — revisá los valores antes de confirmar.</div>
+    ${invNote}
     <div class="form2 mt">
       <div class="form-row"><label>Período facturado</label><select onchange="invSet('period',this.value)">${PERIODS.map(p=>`<option value="${p}" ${S.inv.period===p?'selected':''}>${esc(pLabel(p))}</option>`).join('')}</select></div>
       <div class="form-row"><label>Cantidad (${isElec?'kWh':'m³'})</label><input type="number" min="0" value="${S.inv.qty}" oninput="invSet('qty',this.value)"></div>
@@ -4061,15 +4091,16 @@ function invModalHTML(){
     </div>
     <div class="note mt">Se va a aplicar <b>${factorId}</b> — ${esc(factor.act)} (${factor.v} kgCO₂e/${factor.unit}).</div>
   </div>
-  <div class="modal-f"><button class="btn" onclick="invBack()">Volver</button><button class="btn primary" onclick="invConfirm()">Confirmar y calcular</button></div>`;
+  <div class="modal-f"><button class="btn" onclick="invBack()">Volver</button><button class="btn primary" ${S.inv.reading?'disabled':''} onclick="invConfirm()">Confirmar y calcular</button></div>`;
 }
 
 /* -------------------------- modal: manifiesto de residuos ----------------- */
-S.wm = {step:1,streamId:null,newName:'',newSite:'',fileName:null,period:null,qty:0,date:'',operator:'',doc:'',treatment:'',detected:false};
+S.wm = {step:1,streamId:null,newName:'',newSite:'',fileName:null,period:null,qty:0,date:'',operator:'',doc:'',treatment:'',detected:false,simulated:true,reading:false,readMessage:''};
 const WM_PICKUP_BASE = {'RS-01':1800,'RS-02':650,'RS-03':180,'RS-04':45,'RS-05':420,'RS-06':140};
 function openManifestModal(streamId){
   S.wm = {step:1,streamId:streamId||(WASTECAT[0]?WASTECAT[0].id:'__new'),newName:'',newSite:SITES[0]?SITES[0].id:'',
-    fileName:null,period:PERIODS[PERIODS.length-1],qty:0,date:'',operator:'',doc:'',treatment:'',detected:false};
+    fileName:null,period:PERIODS[PERIODS.length-1],qty:0,date:'',operator:'',doc:'',treatment:'',detected:false,
+    simulated:true,reading:false,readMessage:''};
   openModal(wmModalHTML());
 }
 function wmRerender(){ const m=document.querySelector('#mscrim .modal'); if(m) m.innerHTML=wmModalHTML(); }
@@ -4087,8 +4118,26 @@ function wmExtract(){
   S.wm.detected = Math.random()<0.55;
   S.wm.treatment = S.wm.detected&&opts.length ? opts[Math.floor(Math.random()*opts.length)][0] : '';
 }
-function wmPickFile(input){ const f=input.files&&input.files[0]; if(!f) return; S.wm.fileName=f.name; wmExtract(); S.wm.step=2; wmRerender(); }
-function wmUseSample(){ S.wm.fileName='manifiesto_retiro.pdf'; wmExtract(); S.wm.step=2; wmRerender(); }
+async function wmPickFile(input){
+  const f=input.files&&input.files[0]; if(!f) return;
+  S.wm.fileName=f.name; S.wm.simulated=false; S.wm.reading=true; S.wm.readMessage='';
+  S.wm.step=2; wmRerender();
+  try{
+    const fd=new FormData(); fd.append('kind','waste'); fd.append('file',f,f.name);
+    const result=await uploadDocument('/api/parse-document',fd);
+    const d=result.fields||{};
+    if(d.date){ S.wm.date=d.date; const per=d.date.slice(0,7); ensurePeriod(per); S.wm.period=per; }
+    if(d.qty) S.wm.qty=d.qty;
+    if(d.operator) S.wm.operator=d.operator;
+    if(d.doc) S.wm.doc=d.doc;
+    S.wm.treatment=d.treatment||''; S.wm.detected=false;
+    S.wm.readMessage=result.message||'';
+  }catch(e){
+    S.wm.readMessage='No se pudo leer el documento: '+e.message;
+  }
+  S.wm.reading=false; wmRerender();
+}
+function wmUseSample(){ S.wm.fileName='manifiesto_retiro.pdf'; wmExtract(); S.wm.simulated=true; S.wm.readMessage=''; S.wm.step=2; wmRerender(); }
 function wmBack(){ S.wm.step=1; wmRerender(); }
 function wmSet(k,v){ S.wm[k]=(k==='qty')?(+v||0):v; if(k==='treatment')wmRerender(); }
 function wmConfirm(){
@@ -4133,9 +4182,12 @@ function wmModalHTML(){
   const treatOpts = w?w.treatments:[['reciclaje','FE-055'],['relleno','FE-052'],['incineracion','FE-054'],['especial','FE-053']];
   const fidHit = S.wm.treatment ? (treatOpts.find(x=>x[0]===S.wm.treatment)||[])[1] : null;
   const factor = fidHit?FBI[fidHit]:null;
+  const wmNote = S.wm.reading ? `<div class="note reading"><span class="spin-ic">${ico('gear')}</span> Leyendo el documento…</div>`
+    : S.wm.simulated ? `<div class="note">${ico('info')} Lectura automática (simulada) — revisá los valores antes de confirmar.</div>`
+    : `<div class="note">${ico('info')} ${esc(S.wm.readMessage||'Revisá los valores antes de confirmar.')}</div>`;
   return `<div class="modal-h"><div style="flex:1"><h3>Revisá los datos del manifiesto</h3><div class="sub">${esc(w?w.name:(S.wm.newName||'Residuo nuevo'))} · ${esc(S.wm.fileName||'')}</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
   <div class="modal-b">
-    <div class="note">${ico('info')} Lectura automática (simulada) — revisá los valores antes de confirmar.</div>
+    ${wmNote}
     <div class="form2 mt">
       <div class="form-row"><label>Fecha de retiro</label><input type="date" value="${S.wm.date}" oninput="wmSet('date',this.value)"></div>
       <div class="form-row"><label>Cantidad (kg)</label><input type="number" min="0" value="${S.wm.qty}" oninput="wmSet('qty',this.value)"></div>
@@ -4152,7 +4204,7 @@ function wmModalHTML(){
     ${S.wm.detected&&S.wm.treatment?`<div class="tiny dim" style="margin-top:4px">${ico('check')} Tratamiento detectado en el documento.</div>`:''}
     ${factor?`<div class="note mt">Se va a aplicar <b>${factor.id}</b> — ${esc(factor.act)} (${factor.v} kgCO₂e/kg).</div>`:'<div class="note mt">Elegí el tratamiento para ver qué factor se va a aplicar.</div>'}
   </div>
-  <div class="modal-f"><button class="btn" onclick="wmBack()">Volver</button><button class="btn primary" onclick="wmConfirm()">Confirmar y calcular</button></div>`;
+  <div class="modal-f"><button class="btn" onclick="wmBack()">Volver</button><button class="btn primary" ${S.wm.reading?'disabled':''} onclick="wmConfirm()">Confirmar y calcular</button></div>`;
 }
 
 

@@ -10,10 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from .invoice_parser import parse_document
 from .metrics import normalize, compute
 from .security import hash_password, verify_password, token_hash
 from .storage import db, initialize, decode, database_url
@@ -309,6 +310,13 @@ def inventory(request: Request):
         values = [row.get(f, '') for f in fields]
         writer.writerow(["'"+v if isinstance(v,str) and v.startswith(('=', '+', '-', '@', '\t', '\r')) else v for v in values])
     return Response('\ufeff'+out.getvalue(), media_type='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename="inventario-carbon.csv"'})
+
+
+@app.post('/api/parse-document')
+async def parse_document_endpoint(request: Request, kind: Literal['elec', 'gas', 'waste'] = Form(...), file: UploadFile = File(...)):
+    account(request)
+    data = await file.read()
+    return parse_document(data, file.filename or '', kind)
 
 
 @app.get('/health')
