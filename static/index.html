@@ -3612,63 +3612,38 @@ const FLOWSTEPS=[
  {k:'eng',t:'Motor IVZ Carbon',ic:'sigma',d:'Lo que agrega la plataforma',items:['Reglas de clasificación: alcance, categoría y método','Selección del factor vigente y su versión','Cálculo registro a registro (incl. t·km por tramo)','Regla de propiedad del transporte: A1 vs. Cat. 4','Nivel de confianza y cola de revisión']},
  {k:'inv',t:'Inventario GHG',ic:'layers',d:'Resultado auditable',items:['Alcance 1 con sus 4 subcategorías','Alcance 2 location-based y market-based','Alcance 3 por categoría del GHG Protocol','Trazabilidad completa hasta el comprobante','Reportes mensuales y anuales']},
 ];
+const CARBON_CONNECTORS=[
+ {name:'SAP ERP — Compras y Finanzas',icon:'store',status:'Activo',freq:'Diaria 03:00',desc:'Posiciones de OC, documentos de material y facturas de energía y combustibles desde el ERP corporativo.'},
+ {name:'TMS — gestión de transporte',icon:'truck',status:'Activo',freq:'Semanal',desc:'Guía de transporte por movimiento, peso despachado, kilómetros del tramo y transportista.'},
+ {name:'Medidores de energía',icon:'meter',status:'Activo',freq:'Cada 15 min',desc:'Consumo eléctrico por circuito y por equipo, base del modelo de Alcance 2 por máquina.'},
+ {name:'Plataforma de viajes corporativa',icon:'route',status:'Manual',freq:'—',desc:'Itinerarios, distancias y noches de hotel — hoy se cargan al rendir el gasto.'},
+ {name:'Portal del operador de residuos',icon:'tank',status:'Activo',freq:'Mensual',desc:'Manifiestos de transporte de residuos por tipo de tratamiento.'},
+ {name:'Encuesta de movilidad (RRHH)',icon:'user',status:'Manual',freq:'—',desc:'Distribución modal del traslado casa-trabajo y jornadas remotas.'},
+ {name:'GMAO / service técnico',icon:'gear',status:'Sin conectar',freq:'—',desc:'Horas de máquina reales y recarga de refrigerantes por fuga.'},
+ {name:'Excel / CSV',icon:'upload',status:'Activo',freq:'Ad hoc',desc:'Carga manual asistida con validación y mapeo de columnas.',go:'datacenter'},
+];
+function connStatusPill(status){
+  const cls=status==='Activo'?'ok':status==='Manual'?'warn':'';
+  const dot=status==='Activo'?'var(--ok)':status==='Manual'?'var(--warn)':'var(--muted-2)';
+  return `<span class="pill ${cls}"><i class="dot" style="background:${dot}"></i>${esc(status)}</span>`;
+}
+function connCard(name,icon,badge,desc,rows,onclick){
+  return `<div class="card" style="cursor:pointer" onclick="${onclick}"><div class="card-h">
+    <div style="width:30px;height:30px;border-radius:8px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ico(icon)}</div>
+    <h3 style="flex:1">${esc(name)}</h3>${badge}</div>
+    <div class="card-b">
+    <p class="tiny dim" style="margin:0 0 10px;min-height:32px">${esc(desc)}</p>
+    ${rows}
+    </div></div>`;
+}
+function connStatRows(pairs){
+  return `<div class="tiny" style="display:grid;grid-template-columns:100px 1fr;row-gap:5px">${pairs.map(([k,v])=>`<div class="dim">${esc(k)}</div><div class="strong">${v}</div>`).join('')}</div>`;
+}
 V.integraciones=f=>{
-  const rs=query(f), au=autoShare(rs), bySrc=groupSum(rs,srcOf), tot=sum(rs);
-  const nSrc={}; rs.forEach(r=>{const k=srcOf(r);nSrc[k]=(nSrc[k]||0)+1});
-  const conns=[
-   ['SAP ERP — Compras y Finanzas','sap','API / OData','Activo','Diaria 03:00',['Posiciones de OC con material, grupo de material, cantidad e importe','Documentos de material (entradas de mercadería)','Facturas de gas, electricidad y combustibles','Liquidaciones de tarjeta de combustible por patente'],'compras'],
-   ['TMS — gestión de transporte','tms','Archivo SFTP','Activo','Semanal',['Guía de transporte por movimiento y tramo','Peso transportado y modo (camión, marítimo, aéreo)','Kilómetros del tramo y transportista','Propiedad del vehículo: flota propia o contratada'],'log'],
-   ['Medidores de energía','iot','MQTT','Activo','Cada 15 min',['Consumo eléctrico por circuito y por equipo','Base del modelo de Alcance 2 por máquina'],'med'],
-   ['Plataforma de viajes corporativa','travel','Rendición de gastos','Manual','—',['Itinerarios, distancias y pasajeros — hoy se cargan al rendir el gasto, no llegan solos','Noches de hotel por país'],'viajes'],
-   ['Portal del operador de residuos','prov','Scraping autorizado','Activo','Mensual',['Manifiestos de transporte de residuos por tipo de tratamiento'],'res'],
-   ['Encuesta de movilidad (RRHH)','survey','Formulario','Manual','—',['Distribución modal del traslado casa-trabajo — depende de que el colaborador responda la encuesta','Jornadas en modalidad remota'],'rrhh'],
-   ['GMAO / service técnico — mantenimiento','service','—','Sin conectar','—',['Horas de máquina reales, para reemplazar la estimación por factor de carga','Recarga de refrigerantes por fuga (hoy se asienta a mano desde el remito del service)'],null],
-  ];
-  return carbonTokenCard()
-  +head('Integraciones ERP','De dónde sale cada dato y qué agrega la plataforma. IVZ Carbon no pide volver a cargar información: lee lo que ya existe en el ERP y en los sistemas operativos, y lo convierte en inventario de carbono.',
-    `<button class="btn" onclick="go('datacenter')">Carga por Excel →</button>`)
-  +`<div class="card" data-tour="int-flow"><div class="card-h"><h3>Del documento del ERP al inventario GHG</h3><div class="sub">mismo dato de origen, sin recarga manual</div></div>
-    <div class="card-b"><div class="pipeline">
-      ${FLOWSTEPS.map((s,i)=>`<div class="pl-step ${s.k==='eng'?'em':''}">
-        <div class="pl-ic">${ico(s.ic)}</div>
-        <div class="pl-t">${s.t}</div><div class="pl-d">${s.d}</div>
-        <ul>${s.items.map(it=>`<li>${esc(it)}</li>`).join('')}</ul>
-      </div>${i<FLOWSTEPS.length-1?'<div class="pl-arrow">→</div>':''}`).join('')}
-    </div>
-    <div class="note mt">El motor es agnóstico del sistema de origen: cada conector traduce su formato a un mismo modelo de transacción. Cambiar de ERP no obliga a rehacer las reglas ni el cálculo.</div>
-    </div></div>
-   <div class="grid g4 mt">
-     ${kpi('Emisiones con dato automatizado',nf(au.pctKg,0),'%',`<span class="dim tiny">llegan de ERP, TMS, medidores o portales</span>`,{icon:'plug',bar:au.pctKg,barColor:'var(--teal)'})}
-     ${kpi('Registros automáticos',nf(au.n),'',`<span class="dim tiny">${nf(au.pctN,0)}% del total de registros</span>`,{icon:'swap'})}
-     ${kpi('Conectores activos',nf(conns.filter(c=>c[3]==='Activo').length),' / '+conns.length,`<span class="dim tiny">${nf(conns.filter(c=>c[3]==='Manual').length)} manual · ${nf(conns.filter(c=>c[3]!=='Activo'&&c[3]!=='Manual').length)} sin conectar</span>`,{icon:'link2'})}
-     ${kpi('Registros con trazabilidad completa',nf(pct(rs.filter(isTraceFull).length,rs.length),0),'%','<span class="dim tiny">hasta el documento de origen</span>',{icon:'route',onclick:"go('trazabilidad')"})}
-   </div>
-   <div class="grid g23 mt">
-     <div class="card"><div class="card-h"><h3>Conectores</h3><div class="sub">qué aporta cada sistema al inventario</div></div>
-       <div class="card-b tight"><div class="tblwrap"><table><thead><tr><th>Sistema</th><th>Qué aporta</th><th>Modo</th><th class="r">Participación</th><th>Estado</th></tr></thead><tbody>
-       ${conns.map(c=>`<tr><td><div class="strong">${esc(c[0])}</div><div class="tiny dim">${srcBadge(c[1])} ${c[4]!=='—'?'· sincronización '+c[4].toLowerCase():''}</div></td>
-         <td class="tiny dim">${c[5].map(x=>'· '+esc(x)).join('<br>')}</td>
-         <td class="tiny num">${esc(c[2])}</td>
-         <td class="r num tiny">${bySrc[c[1]]?nf(pct(bySrc[c[1]],tot),1)+'%<div class="dim">'+nf(nSrc[c[1]]||0)+' reg.</div>':'<span class="dim">—</span>'}</td>
-         <td>${c[3]==='Activo'?'<span class="pill ok">Activo</span>':c[3]==='Manual'?'<span class="pill warn">Manual</span>':'<span class="pill">Sin conectar</span>'}</td></tr>`).join('')}
-       </tbody></table></div></div></div>
-     <div>
-       <div class="card"><div class="card-h"><h3>Origen de los datos de actividad</h3></div><div class="card-b">
-         <div class="covbar" style="height:18px">${Object.keys(bySrc).sort((a,b)=>bySrc[b]-bySrc[a]).map(k=>`<i style="width:${pct(bySrc[k],tot)}%;background:${(SRC[k]||SRC.manual).c}"></i>`).join('')}</div>
-         <div class="tblwrap"><table style="margin-top:12px"><tbody>${Object.keys(bySrc).sort((a,b)=>bySrc[b]-bySrc[a]).map(k=>`<tr><td>${srcBadge(k)}</td><td class="tiny dim">${AUTO_SRC.has(k)||k==='calc'?'Automático':'Manual / planilla'}</td><td class="r num strong">${nf(pct(bySrc[k],tot),1)}%</td></tr>`).join('')}</tbody></table></div>
-       </div></div>
-       <div class="card mt"><div class="card-h"><h3>Un ejemplo concreto</h3><div class="sub">Categoría 4 — transporte aguas arriba</div></div><div class="card-b">
-         <div class="tape">
-         ${[['SAP ERP','La entrada de mercadería informa material, cantidad y la OC que la originó.'],
-            ['TMS','La guía de transporte agrega el modo, el peso despachado, los kilómetros del tramo y el transportista.'],
-            ['IVZ Carbon','Verifica la propiedad del vehículo, arma los tramos, calcula t·km, aplica el factor del modo y clasifica el resultado.'],
-            ['Inventario','El movimiento queda en Alcance 3 Cat. 4 — o en Alcance 1 si el camión es propio, sin duplicar la emisión.']]
-           .map(([a,b],i,arr)=>`<div class="tstep ${i===arr.length-1?'origin':''}"><div class="lv">${a}</div><div class="bd"><div class="ttl" style="font-family:var(--sans);font-size:12.5px;font-weight:500">${b}</div></div></div>`).join('')}
-         </div>
-         <div style="margin-top:10px"><button class="btn sm primary" onclick="go('movimientos')">Ver los movimientos en el mapa →</button></div>
-       </div></div>
-     </div>
-   </div>`;
+  return head('Integraciones','Fuentes conectadas que alimentan el modelo ESG de forma automática.')
+  +`<div class="grid g3">${carbonTokenCard()}${CARBON_CONNECTORS.map(c=>connCard(c.name,c.icon,connStatusPill(c.status),c.desc,
+      connStatRows([['Última sync','—'],['Frecuencia',esc(c.freq)],['Registros','—']]),
+      c.go?`go('${c.go}')`:`toast('Este conector es una demostración del alcance del producto — no se conecta a ningún sistema real.','ℹ')`)).join('')}</div>`;
 };
 
 /* ---------------- Token de acceso para IVZ Sustainability Hub ----------- */
@@ -3678,18 +3653,24 @@ function loadCarbonTokens(){
 }
 function carbonTokenCard(){
   if(CARBON_TOKENS===null){CARBON_TOKENS=[];loadCarbonTokens();}
+  const status=CARBON_TOKENS.length?connStatusPill('Activo'):'<span class="pill">Disponible</span>';
+  return connCard('IVZ Sustainability Hub','leaf',
+    status+'<span class="pill accent">Integración nativa</span>',
+    'Importación automática del inventario de GEI (Alcance 1, 2 y 3) hacia IVZ Sustainability Hub, sin volver a cargar los datos a mano.',
+    connStatRows([['Última sync','—'],['Frecuencia','Bajo demanda'],['Tokens activos',String(CARBON_TOKENS.length)]]),
+    'openCarbonTokenPanel()');
+}
+function openCarbonTokenPanel(){
   const rows=CARBON_TOKENS.map(t=>`<tr><td class="strong">${esc(t.label)}</td>
     <td class="tiny dim">${esc(new Date(t.created).toLocaleDateString('es-AR'))}</td>
     <td class="tiny dim">${t.last_used?esc(new Date(t.last_used).toLocaleDateString('es-AR')):'Nunca'}</td>
     <td class="r"><button class="btn sm ghost" onclick='confirmRevokeCarbonToken(${JSON.stringify(t.id)},${JSON.stringify(t.label)})'>Revocar</button></td></tr>`).join('');
-  return `<div class="card" style="margin-bottom:16px"><div class="card-h">
-    <div style="width:30px;height:30px;border-radius:8px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:none">${ico('leaf')}</div>
-    <h3 style="flex:1">IVZ Sustainability Hub</h3><span class="pill accent">Integración nativa</span></div>
-    <div class="card-b">
-    <p class="tiny dim" style="margin:0 0 12px">Generá un token para que IVZ Sustainability Hub lea el inventario corporativo (Alcance 1, 2 y 3 por sitio y período) de esta cuenta, sin volver a cargar los datos a mano.</p>
-    ${CARBON_TOKENS.length?`<div class="tblwrap"><table><thead><tr><th>Token</th><th>Creado</th><th>Último uso</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p class="tiny dim">Todavía no generaste ningún token.</p>'}
-    <button class="btn primary mt" onclick="openCarbonTokenForm()">Generar token</button>
-    </div></div>`;
+  openModal(`<div class="modal-h"><div style="flex:1"><h3>IVZ Sustainability Hub</h3><div class="sub">Integración nativa</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
+   <div class="modal-b">
+     <p class="tiny dim" style="margin-top:0">Generá un token para que IVZ Sustainability Hub lea el inventario corporativo (Alcance 1, 2 y 3 por sitio y período) de esta cuenta, sin volver a cargar los datos a mano.</p>
+     ${CARBON_TOKENS.length?`<div class="tblwrap"><table><thead><tr><th>Token</th><th>Creado</th><th>Último uso</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p class="tiny dim">Todavía no generaste ningún token.</p>'}
+   </div>
+   <div class="modal-f"><button class="btn" onclick="closeModal()">Cerrar</button><button class="btn primary" onclick="openCarbonTokenForm()">Generar token</button></div>`);
 }
 function openCarbonTokenForm(){
   openModal(`<div class="modal-h"><div style="flex:1"><h3>Generar token</h3><div class="sub">Para IVZ Sustainability Hub</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
