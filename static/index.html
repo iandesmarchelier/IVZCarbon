@@ -4359,18 +4359,45 @@ function addMovManual(row){
 /* Todas las cargas de "Consumos y actividades" (facturas de energía u otras
    actividades de negocio) terminan acá, en el mismo motor de Activity
    Records que ya usa el resto de la plataforma (rec()/REC). */
+/* Recargar la misma actividad para el mismo sitio/período reemplaza el registro
+   anterior (y su par de Alcance 3 Cat. 3, si lo tenía) en vez de sumarse — mismo
+   criterio que ya usa clearPriorEnergy para las facturas cargadas a mano. Sin esto,
+   corregir un dato ya importado por Excel requiere borrar todo el inventario. */
+function clearPriorActivity(siteId,period,activityId){
+  for(let i=REC.length-1;i>=0;i--){
+    const r=REC[i];
+    if(r.site===siteId&&r.p===period&&r.activityId===activityId){
+      if(r.pair){ const j=REC.findIndex(x=>x.rid===r.pair); if(j>=0) REC.splice(j,1); }
+      REC.splice(i,1);
+    }
+  }
+}
 function registerActivityRecord(o){
   const b=BIZBI()[o.activityId]; if(!b) return null;
   if(!FBI[b.factor]){ toast('La actividad «'+b.name+'» todavía no tiene un factor de emisión vinculado — el registro se guardó pero no suma emisiones. Vinculá un factor desde Factores de emisión.','⚠'); return null; }
   ensurePeriod(o.period);
-  const site=o.siteId?SBI[o.siteId]:null;
+  const siteId=o.siteId||(SITES[0]?SITES[0].id:'');
+  const site=siteId?SBI[siteId]:null;
   const type=bizType(b);
-  const r=rec({p:o.period,type,site:o.siteId||(SITES[0]?SITES[0].id:''),proc:null,line:null,
+  clearPriorActivity(siteId,o.period,o.activityId);
+  const r=rec({p:o.period,type,site:siteId,proc:null,line:null,activityId:o.activityId,
     source:b.name+(o.doc?' · '+o.doc:(site?' · '+site.name:'')),
     qty:+o.qty, unit:b.unit, factor:b.factor,
     detail:Object.fromEntries(Object.entries({Proveedor:o.provider,Importe:o.amount?nf(o.amount,2)+' '+(o.currency||''):null,Observaciones:o.notes}).filter(([,v])=>v)),
     origin:{sys:'Centro de Datos — '+(o.via||'carga manual'),doc:o.doc||'—',method:'Carga periódica de actividad de negocio',by:o.by||'Usuario IVZCarbon'}});
   if(b.scope===3) r.cls={state:'auto',conf:96};
+  /* misma electricidad, dos cálculos: igual que en una factura cargada a mano
+     (addInvoiceRecord), toda actividad de Alcance 2 tipo "elec" — venga de Excel
+     o de carga manual — genera también su par de Alcance 3 Cat. 3 (pérdidas de
+     transmisión y distribución) con el factor de red del país del sitio. */
+  if(type==='elec'&&site){
+    const d=rec({p:o.period,type:'td',site:siteId,source:'Pérdidas de red asociadas a '+site.name,qty:+o.qty,unit:'kWh',
+      src:'calc',baseSrc:'excel',factor:site.cc==='UY'?'FE-021':'FE-020',
+      detail:{'Consumo aguas abajo':nf(+o.qty)+' kWh'},
+      origin:{sys:SYS.calc,doc:'derivado de '+r.rid,method:'Mismo consumo eléctrico del Alcance 2 × factor de pérdidas de red',by:'Motor de cálculo IVZ Carbon'}});
+    r.pair=d.rid; d.pair=r.rid;
+    postProcessRecord(d);
+  }
   logImport(b.scope===1||b.scope===2?'Consumo energético':'Actividad de negocio', b.name+' · '+pLabel(o.period)+' · '+nf(o.qty,1)+' '+b.unit, 1);
   return r;
 }
