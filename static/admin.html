@@ -1,0 +1,141 @@
+<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Administración · IVZ Carbon</title>
+<style>
+:root{--accent:#3F704D;--accent-2:#4B7F55;--accent-soft:#E7F1E8;--line:#dbe4dc;--ink:#173d35;--muted:#65786c;--danger:#a33131}
+*{box-sizing:border-box}
+body{margin:0;background:#f2f5f0;color:var(--ink);font:15px/1.5 system-ui}
+header{display:flex;align-items:center;justify-content:space-between;padding:16px 28px;background:#fff;border-bottom:1px solid var(--line)}
+header h1{font-size:17px;margin:0}
+header .sub{color:var(--muted);font-size:12.5px}
+main{max-width:1000px;margin:28px auto;padding:0 20px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:20px}
+.card-h{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.card-h h2{font-size:15px;margin:0}
+.card-b{padding:18px 20px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+tr:last-child td{border-bottom:none}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:600}
+.pill.admin{background:#fde8d0;color:#8a5a1a}
+.pill.client{background:var(--accent-soft);color:var(--accent)}
+.pill.inactive{background:#f3d9d9;color:var(--danger)}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:#fff;padding:7px 12px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.ghost{border-color:transparent;background:transparent}
+button.danger{color:var(--danger);border-color:#e6c4c4}
+button:disabled{opacity:.5;cursor:default}
+.row-actions{display:flex;gap:6px;flex-wrap:wrap}
+.form2{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}
+@media (max-width:560px){header{padding:14px 16px;flex-wrap:wrap;gap:8px}main{padding:0 12px}.form2{grid-template-columns:1fr}}
+label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:4px}
+input{font:inherit;width:100%;padding:9px 10px;border-radius:8px;border:1px solid #bccbbf}
+#err{color:var(--danger);font-size:13px;min-height:18px}
+dialog{border:none;border-radius:14px;padding:0;max-width:420px;width:92vw}
+dialog::backdrop{background:#0004}
+.dlg-b{padding:22px}
+.dlg-b h3{margin:0 0 6px}
+.pw{font:600 15px ui-monospace,monospace;background:var(--accent-soft);color:var(--accent);padding:10px 12px;border-radius:8px;margin:10px 0;word-break:break-all}
+.dlg-f{display:flex;justify-content:flex-end;gap:8px;padding:14px 22px;border-top:1px solid var(--line)}
+.empty{color:var(--muted);padding:6px 0}
+</style>
+<header>
+  <div><h1>IVZ Carbon — Administración</h1><div class="sub" id="whoami"></div></div>
+  <button class="ghost" id="logout">Cerrar sesión</button>
+</header>
+<main>
+  <div class="card">
+    <div class="card-h"><h2>Nueva cuenta de cliente</h2></div>
+    <div class="card-b">
+      <form id="createForm" class="form2">
+        <div><label>Usuario</label><input name="username" required maxlength="150" placeholder="ej.: acme"></div>
+        <div><label>Empresa</label><input name="company" required maxlength="200" placeholder="ej.: ACME S.A."></div>
+        <button class="primary" type="submit">Crear cuenta</button>
+      </form>
+      <p id="err"></p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h"><h2>Cuentas</h2><span class="sub" id="count"></span></div>
+    <div class="card-b" style="padding:0;overflow-x:auto">
+      <table style="min-width:640px"><thead><tr><th>Usuario</th><th>Empresa</th><th>Rol</th><th>Estado</th><th>Última actividad</th><th></th></tr></thead>
+        <tbody id="rows"></tbody></table>
+    </div>
+  </div>
+</main>
+<dialog id="pwDialog"><div class="dlg-b"><h3 id="pwTitle"></h3><p>Guardala ahora — no se va a poder ver de nuevo.</p><div class="pw" id="pwValue"></div></div><div class="dlg-f"><button id="pwCopy">Copiar</button><button class="primary" id="pwClose">Listo</button></div></dialog>
+<script>
+async function api(path,options={}){
+  const r=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-IVZ-Carbon':'1',...options.headers}});
+  if(!r.ok){let body;try{body=await r.json()}catch{body={detail:await r.text().catch(()=>r.statusText)}}throw new Error(typeof body.detail==='string'?body.detail:'La solicitud contiene datos inválidos.')}
+  return r.status===204?null:r.json();
+}
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const errEl=document.getElementById('err');
+function showPassword(title,password){
+  document.getElementById('pwTitle').textContent=title;
+  document.getElementById('pwValue').textContent=password;
+  document.getElementById('pwDialog').showModal();
+}
+document.getElementById('pwCopy').onclick=()=>navigator.clipboard.writeText(document.getElementById('pwValue').textContent).catch(()=>{});
+document.getElementById('pwClose').onclick=()=>document.getElementById('pwDialog').close();
+async function loadAccounts(){
+  errEl.textContent='';
+  let rows;
+  try{ rows=await api('/api/admin/accounts'); }
+  catch(e){ errEl.textContent=e.message; return; }
+  document.getElementById('count').textContent=rows.length+(rows.length===1?' cuenta':' cuentas');
+  document.getElementById('rows').innerHTML=rows.length?rows.map(r=>`
+    <tr>
+      <td>${esc(r.username)}</td>
+      <td>${esc(r.company)}</td>
+      <td><span class="pill ${r.role}">${r.role==='admin'?'Admin':'Cliente'}</span></td>
+      <td>${r.active?'Activa':'<span class=\"pill inactive\">Desactivada</span>'}</td>
+      <td>${esc((r.updated||r.created||'').slice(0,10)||'—')}</td>
+      <td><div class="row-actions">
+        ${r.role!=='admin'?`<button data-act="login" data-id="${r.id}" data-name="${esc(r.company)}">Entrar como</button>`:''}
+        <button data-act="reset" data-id="${r.id}" data-user="${esc(r.username)}">Resetear contraseña</button>
+        <button class="${r.active?'danger':''}" data-act="toggle" data-id="${r.id}" data-active="${r.active?1:0}">${r.active?'Desactivar':'Reactivar'}</button>
+      </div></td>
+    </tr>`).join(''):'<tr><td colspan="6" class="empty">Todavía no hay cuentas de clientes.</td></tr>';
+}
+document.getElementById('rows').addEventListener('click',async e=>{
+  const b=e.target.closest('button[data-act]'); if(!b) return;
+  const id=b.dataset.id;
+  errEl.textContent='';
+  try{
+    if(b.dataset.act==='login'){
+      if(!confirm('Vas a entrar como '+b.dataset.name+'. ¿Continuar?')) return;
+      await api('/api/admin/accounts/'+id+'/impersonate',{method:'POST'});
+      location.href='/';
+    } else if(b.dataset.act==='reset'){
+      if(!confirm('¿Resetear la contraseña de '+b.dataset.user+'? Se cierran sus sesiones activas.')) return;
+      const r=await api('/api/admin/accounts/'+id+'/reset-password',{method:'POST'});
+      showPassword('Nueva contraseña de '+b.dataset.user,r.password);
+    } else if(b.dataset.act==='toggle'){
+      const active=b.dataset.active!=='1';
+      await api('/api/admin/accounts/'+id+'/active',{method:'PUT',body:JSON.stringify({active})});
+      loadAccounts();
+    }
+  }catch(err){ errEl.textContent=err.message; }
+});
+document.getElementById('createForm').onsubmit=async e=>{
+  e.preventDefault();
+  errEl.textContent='';
+  const data=Object.fromEntries(new FormData(e.target));
+  try{
+    const r=await api('/api/admin/accounts',{method:'POST',body:JSON.stringify(data)});
+    e.target.reset();
+    showPassword('Contraseña de '+r.username,r.password);
+    loadAccounts();
+  }catch(err){ errEl.textContent=err.message; }
+};
+document.getElementById('logout').onclick=async()=>{ try{await api('/api/logout',{method:'POST'})}catch(e){} location.replace('/'); };
+(async()=>{
+  try{
+    const me=await api('/api/me');
+    document.getElementById('whoami').textContent=me.username+' · '+me.company;
+  }catch(e){ location.replace('/'); return; }
+  loadAccounts();
+})();
+</script>
+</html>

@@ -3800,6 +3800,7 @@ V.acerca=f=>{
    ['Regla de no duplicación','El transporte con flota propia se reconoce en Alcance 1 y queda excluido de la Categoría 4.'],
    ['Trazabilidad','Los nueve bloques de la cadena se arman desde el propio registro: el recorrido es real dentro del prototipo.'],
    ['Filtros e indicadores','Período, sitio, alcance, categoría, intensidades y KPIs se recalculan sobre los registros.'],
+   ['Administración de cuentas','Un rol admin separado del de cliente: alta de cuentas nuevas, reseteo de contraseña, desactivación y "entrar como" un cliente para configurarlo, todo auditado en los eventos de esa cuenta.'],
    ['Lectura de facturas de electricidad y gas','Subir el PDF real de una factura de Edenor, UTE o Metrogas extrae los datos del documento (texto embebido o, si no lo tiene, OCR con Tesseract) sin ningún modelo de lenguaje de por medio, y los deja para revisar antes de confirmar. "Usar una factura de ejemplo" sigue siendo un dato simulado, para probar el flujo sin archivo.']];
   const sim=[['Datos de la empresa','Sitios, consumos, compras y movimientos son ficticios, generados de forma determinística.'],
    ['Lectura de manifiestos de residuos','Todavía no hay un proveedor de referencia: la lectura es un parser genérico y sus valores se marcan de confianza baja. Revisalos siempre antes de confirmar.'],
@@ -3809,7 +3810,7 @@ V.acerca=f=>{
    ['Carga de Excel','El asistente lee el archivo y valida las filas, pero el alta se hace sobre los datos en memoria de esta sesión.'],
    ['Mapa','Es un mapa vectorial propio, sin conexión a servicios externos; las distancias son valores de referencia por tramo, no un cálculo de ruteo real.'],
    ['Factores de emisión','Son referencias de trabajo con su fuente declarada. No fueron verificados para uso en un reporte.'],
-   ['Usuarios y permisos','No hay autenticación ni roles. Un solo perfil ve todo.']];
+   ['Permisos dentro de una cuenta','El rol admin ve y gestiona cuentas de clientes; dentro de la cuenta de un cliente sigue habiendo un solo perfil que ve todo, sin roles internos (ej. solo lectura).']];
   const next=['Elegir la primera categoría de Alcance 3 a automatizar de punta a punta contra el ERP real.',
    'Acordar el modelo de datos de la plantilla Excel y de la extracción del TMS antes de escribir el importador.',
    'Definir el umbral de confianza y el flujo de revisión y aprobación mensual del inventario.',

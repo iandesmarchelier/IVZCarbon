@@ -96,6 +96,17 @@
   // Mapping profiles belong to the account and are included in the server snapshot.
   window.carbonProfiles={get:()=>JSON.stringify(mappingProfiles),set:value=>{mappingProfiles=JSON.parse(value)}};
   function activate(result){revision=result.revision;hydrate(result.state);baseline=JSON.stringify(snapshot());ready=true;gate.remove();render();setInterval(save,3000);}
+  function showImpersonationBar(){
+    const bar=document.createElement('div');
+    bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:200;background:#8a5a1a;color:#fff;font:13px system-ui;display:flex;align-items:center;justify-content:center;gap:14px;padding:8px 16px';
+    bar.innerHTML='<span>Estás viendo esta cuenta como administrador.</span>';
+    const back=document.createElement('button');
+    back.textContent='Volver a administración';
+    back.style.cssText='font:inherit;cursor:pointer;border-radius:6px;border:1px solid #fff6;background:transparent;color:#fff;padding:4px 10px';
+    back.onclick=async()=>{back.disabled=true;try{await api('/api/admin/return',{method:'POST'});location.replace('/admin')}catch(e){back.disabled=false}};
+    bar.append(back);document.body.prepend(bar);
+    document.body.style.paddingTop='36px';
+  }
   async function boot(){
     try{
       const [result,user]=await Promise.all([api('/api/state'),api('/api/me')]);
@@ -104,6 +115,7 @@
       document.getElementById('profile-name').textContent=username;
       document.getElementById('profile-company').textContent=company;
       document.getElementById('profile-avatar').textContent=username.slice(0,2).toUpperCase();
+      if(user.impersonating)showImpersonationBar();
       if(result.state){activate(result);return;}
       gate.innerHTML='<section style="max-width:510px;background:white;border-radius:16px;padding:36px"><h1>Tu inventario de carbono</h1><p>Elegí cómo empezar. La biblioteca de factores de referencia queda disponible en ambas opciones.</p><button class="btn primary" id="carbon-empty">Empezar vacío</button> <button class="btn" id="carbon-demo">Explorar con datos demo</button><p id="carbon-init-error" role="alert"></p></section>';
       for(const mode of ['empty','demo'])document.getElementById('carbon-'+mode).onclick=async()=>{for(const b of gate.querySelectorAll('button'))b.disabled=true;try{activate(await api('/api/initialize',{method:'POST',body:JSON.stringify({mode})}))}catch(e){document.getElementById('carbon-init-error').textContent=e.message;for(const b of gate.querySelectorAll('button'))b.disabled=false;}};

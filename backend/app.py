@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from .invoice_parser import parse_document
@@ -51,11 +51,18 @@ async def guard(request: Request, call_next):
 
 def account(request):
     with db() as s:
-        row = s.execute('SELECT a.id,a.username,a.company FROM carbon_accounts a JOIN carbon_sessions t ON t.account=a.id WHERE t.token=? AND t.expires>?',
+        row = s.execute('SELECT a.id,a.username,a.company,a.role,a.active,t.impersonated_by FROM carbon_accounts a JOIN carbon_sessions t ON t.account=a.id WHERE t.token=? AND t.expires>?',
                         (token_hash(request.cookies.get('ivz_carbon_session', '')), time.time())).fetchone()
-    if not row:
+    if not row or not row['active']:
         raise HTTPException(401, 'Ingresá a tu cuenta de IVZ Carbon.')
     return dict(row)
+
+
+def require_admin(request):
+    user = account(request)
+    if user['role'] != 'admin':
+        raise HTTPException(403, 'Necesitás permisos de administrador.')
+    return user
 
 
 def account_by_token(request):
@@ -82,13 +89,18 @@ def event(s, user, action, revision, details):
 
 
 def bootstrap_account():
-    """Provision the initial account from a secret hash; never reset an existing user."""
+    """Provision the initial accounts from secret hashes; never reset an existing user."""
+    now = datetime.now(timezone.utc).isoformat()
     digest = os.getenv('CARBON_BOOTSTRAP_PASSWORD_HASH')
-    if not digest:
-        return
-    with db() as s:
-        s.execute('INSERT INTO carbon_accounts VALUES (?,?,?,?) ON CONFLICT(username) DO NOTHING',
-                  (str(uuid.uuid4()), 'demo', 'IVZ Carbon', digest))
+    if digest:
+        with db() as s:
+            s.execute("INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?) ON CONFLICT(username) DO NOTHING",
+                      (str(uuid.uuid4()), 'demo', 'IVZ Carbon', digest, 'client', True, now))
+    admin_digest = os.getenv('CARBON_ADMIN_PASSWORD_HASH')
+    if admin_digest:
+        with db() as s:
+            s.execute("INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?) ON CONFLICT(username) DO NOTHING",
+                      (str(uuid.uuid4()), 'admin', 'Administración IVZ Carbon', admin_digest, 'admin', True, now))
 
 
 class Login(BaseModel):
@@ -110,10 +122,12 @@ def login(body: Login, response: Response):
     valid = verify_password(body.password, user['password'] if user else DUMMY)
     if not user or not valid:
         raise HTTPException(401, 'Usuario o contraseña incorrectos.')
+    if not user['active']:
+        raise HTTPException(403, 'Esta cuenta fue desactivada.')
     token = secrets.token_urlsafe(32)
     with db() as s:
         s.execute('DELETE FROM carbon_sessions WHERE expires<?', (now,))
-        s.execute('INSERT INTO carbon_sessions VALUES (?,?,?)', (token_hash(token), user['id'], now+28800))
+        s.execute('INSERT INTO carbon_sessions (token,account,expires) VALUES (?,?,?)', (token_hash(token), user['id'], now+28800))
         s.execute('DELETE FROM carbon_login_limits WHERE username=?', (name,))
         event(s, user['id'], 'login', 0, {})
     response.set_cookie('ivz_carbon_session', token, httponly=True, samesite='strict',
@@ -131,7 +145,9 @@ def logout(request: Request, response: Response):
 
 @app.get('/api/me')
 def me(request: Request):
-    return account(request)
+    user = account(request)
+    return {'id': user['id'], 'username': user['username'], 'company': user['company'],
+            'role': user['role'], 'impersonating': bool(user.get('impersonated_by'))}
 
 
 def load(user):
@@ -319,6 +335,105 @@ async def parse_document_endpoint(request: Request, kind: Literal['elec', 'gas',
     return parse_document(data, file.filename or '', kind)
 
 
+@app.get('/api/admin/accounts')
+def admin_list_accounts(request: Request):
+    require_admin(request)
+    with db() as s:
+        rows = s.execute('SELECT a.id,a.username,a.company,a.role,a.active,a.created,st.updated FROM carbon_accounts a '
+                         'LEFT JOIN carbon_states st ON st.account=a.id ORDER BY a.created DESC, a.username').fetchall()
+    return [dict(r) for r in rows]
+
+
+class AdminAccountCreate(BaseModel):
+    username: str = Field(min_length=1, max_length=150)
+    company: str = Field(min_length=1, max_length=200)
+
+
+@app.post('/api/admin/accounts')
+def admin_create_account(body: AdminAccountCreate, request: Request):
+    admin = require_admin(request)
+    name = body.username.strip().lower()
+    company = body.company.strip()
+    password = secrets.token_urlsafe(12)
+    account_id = str(uuid.uuid4())
+    with db() as s:
+        if s.execute('SELECT id FROM carbon_accounts WHERE username=?', (name,)).fetchone():
+            raise HTTPException(409, 'Ya existe una cuenta con ese usuario.')
+        s.execute('INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?)',
+                  (account_id, name, company, hash_password(password), 'client', True, datetime.now(timezone.utc).isoformat()))
+        event(s, admin['id'], 'admin_create_account', 0, {'target': account_id, 'username': name, 'company': company})
+    return {'id': account_id, 'username': name, 'company': company, 'password': password}
+
+
+@app.post('/api/admin/accounts/{account_id}/reset-password')
+def admin_reset_password(account_id: str, request: Request):
+    admin = require_admin(request)
+    password = secrets.token_urlsafe(12)
+    with db() as s:
+        target = s.execute('SELECT id,username FROM carbon_accounts WHERE id=?', (account_id,)).fetchone()
+        if not target:
+            raise HTTPException(404, 'Cuenta no encontrada.')
+        s.execute('UPDATE carbon_accounts SET password=? WHERE id=?', (hash_password(password), account_id))
+        s.execute('DELETE FROM carbon_sessions WHERE account=?', (account_id,))
+        event(s, admin['id'], 'admin_reset_password', 0, {'target': account_id, 'username': target['username']})
+    return {'password': password}
+
+
+class AdminSetActive(BaseModel):
+    active: bool
+
+
+@app.put('/api/admin/accounts/{account_id}/active')
+def admin_set_active(account_id: str, body: AdminSetActive, request: Request):
+    admin = require_admin(request)
+    if account_id == admin['id'] and not body.active:
+        raise HTTPException(400, 'No podés desactivar tu propia cuenta de administrador.')
+    with db() as s:
+        target = s.execute('SELECT id,username FROM carbon_accounts WHERE id=?', (account_id,)).fetchone()
+        if not target:
+            raise HTTPException(404, 'Cuenta no encontrada.')
+        s.execute('UPDATE carbon_accounts SET active=? WHERE id=?', (body.active, account_id))
+        if not body.active:
+            s.execute('DELETE FROM carbon_sessions WHERE account=?', (account_id,))
+        event(s, admin['id'], 'admin_set_active', 0, {'target': account_id, 'username': target['username'], 'active': body.active})
+    return {'ok': True}
+
+
+@app.post('/api/admin/accounts/{account_id}/impersonate')
+def admin_impersonate(account_id: str, request: Request, response: Response):
+    admin = require_admin(request)
+    with db() as s:
+        target = s.execute('SELECT id,username,active FROM carbon_accounts WHERE id=?', (account_id,)).fetchone()
+        if not target or not target['active']:
+            raise HTTPException(404, 'Cuenta no encontrada o inactiva.')
+        token = secrets.token_urlsafe(32)
+        s.execute('INSERT INTO carbon_sessions (token,account,expires,impersonated_by) VALUES (?,?,?,?)',
+                  (token_hash(token), account_id, time.time()+28800, admin['id']))
+        event(s, admin['id'], 'admin_impersonate', 0, {'target': account_id, 'username': target['username']})
+    secure = os.getenv('CARBON_ENV') == 'production' or bool(os.getenv('VERCEL'))
+    response.set_cookie('ivz_carbon_admin_return', request.cookies.get('ivz_carbon_session', ''),
+                        httponly=True, samesite='strict', secure=secure, max_age=28800)
+    response.set_cookie('ivz_carbon_session', token, httponly=True, samesite='strict', secure=secure, max_age=28800)
+    return {'ok': True}
+
+
+@app.post('/api/admin/return')
+def admin_return(request: Request, response: Response):
+    return_token = request.cookies.get('ivz_carbon_admin_return', '')
+    if not return_token:
+        raise HTTPException(400, 'No hay una sesión de administrador para volver.')
+    with db() as s:
+        row = s.execute('SELECT a.id,a.role FROM carbon_accounts a JOIN carbon_sessions t ON t.account=a.id WHERE t.token=? AND t.expires>?',
+                        (token_hash(return_token), time.time())).fetchone()
+    if not row or row['role'] != 'admin':
+        response.delete_cookie('ivz_carbon_admin_return')
+        raise HTTPException(401, 'La sesión de administrador venció. Volvé a ingresar.')
+    secure = os.getenv('CARBON_ENV') == 'production' or bool(os.getenv('VERCEL'))
+    response.set_cookie('ivz_carbon_session', return_token, httponly=True, samesite='strict', secure=secure, max_age=28800)
+    response.delete_cookie('ivz_carbon_admin_return')
+    return {'ok': True}
+
+
 @app.get('/health')
 def health():
     with db() as s:
@@ -329,10 +444,23 @@ def health():
 @app.get('/')
 def index(request: Request):
     try:
-        account(request)
+        user = account(request)
     except HTTPException:
         return FileResponse(ROOT / 'static/login.html')
+    if user['role'] == 'admin' and not user.get('impersonated_by'):
+        return RedirectResponse('/admin')
     return FileResponse(ROOT / 'static/index.html')
+
+
+@app.get('/admin')
+def admin_page(request: Request):
+    try:
+        user = account(request)
+    except HTTPException:
+        return FileResponse(ROOT / 'static/login.html')
+    if user['role'] != 'admin':
+        raise HTTPException(403, 'Necesitás permisos de administrador.')
+    return FileResponse(ROOT / 'static/admin.html')
 
 
 @app.get('/bridge.js')
