@@ -3791,7 +3791,7 @@ function findBizLoose(s,scopeFilter){ if(!s)return null; const n=normTxt(s); let
    asignación queda en r.fm con su porcentaje y espera que una persona la apruebe; si otro factor
    tiene el mismo porcentaje es un empate y se marca con advertencia. Al aprobar, el texto queda
    como término de búsqueda del factor elegido: la próxima vez coincide al 100%. */
-const FM_HIGH=80, FM_MID=50;
+const FM_HIGH=80, FM_MID=50, FM_WARN=75;  /* FM_WARN: «Aprobar todo» avisa cuántas quedan por debajo */
 async function matchFactors(specs){
   if(window.carbonSave) await window.carbonSave();  // los términos aprendidos recién aprobados ya tienen que estar en el servidor
   const out=[];
@@ -3905,8 +3905,8 @@ function fmFiltered(f){
 function fmApproveAll(){
   const rs=fmFiltered(S.f).filter(r=>!r.fm.ok), tied=rs.filter(r=>fmTied(r).length).length, todo=rs.filter(r=>!fmTied(r).length);
   if(!todo.length){ toast(tied?'Solo quedan asignaciones con empate: elegí el factor de cada una.':'No hay asignaciones pendientes con estos filtros.','—'); return; }
-  const low=todo.filter(r=>fmTone(r.fm.pct)==='err').length;
-  if(!confirm('¿Aprobar '+nf(todo.length)+' asignaciones de factor?'+(low?'\n\n'+nf(low)+' tienen menos de '+FM_MID+'% de similitud.':'')+(tied?'\n\n'+nf(tied)+' con empate no se aprueban: hay que elegir el factor de cada una.':''))) return;
+  const low=todo.filter(r=>r.fm.pct==null||r.fm.pct<FM_WARN).length;
+  if(!confirm('¿Aprobar '+nf(todo.length)+' asignaciones de factor?'+(low?'\n\nAtención: '+nf(low)+' tienen menos de '+FM_WARN+'% de similitud. Conviene revisarlas antes: son las primeras de la lista.':'')+(tied?'\n\n'+nf(tied)+' con empate no se aprueban: hay que elegir el factor de cada una.':''))) return;
   let n=0; todo.forEach(r=>{ if(fmApprove(r)) n++; });
   S.fmSel.clear();
   toast(nf(n)+' asignaciones aprobadas.'+(tied?' '+nf(tied)+' con empate quedaron pendientes.':''),tied?'⚠':'✓'); render();
