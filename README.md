@@ -66,12 +66,14 @@ Documentación interactiva: `/docs`. Las operaciones de escritura requieren `X-I
 | `POST /api/login`, `POST /api/logout`, `GET /api/me` | Acceso |
 | `POST /api/initialize` | Inicializar una vez, `{ "mode": "empty" }` o `demo` |
 | `GET /api/state`, `PUT /api/state` | Leer/guardar `{revision, state}` |
-| `GET /api/summary?year=2025&site=S1` | Indicadores calculados en Python |
+| `GET /api/state/catalogue`, `GET /api/state/rows`, `POST /api/state/changes`, `POST /api/state/upload` | Carga por páginas y guardado de cambios (lo que usa la pantalla) |
+| `GET /api/summary?year=2025&site=S1` | Indicadores calculados en Python; un año cerrado devuelve sus resultados congelados y `closed` |
+| `GET /api/closures`, `POST /api/closures` `{year}`, `POST /api/closures/{year}/reopen` `{reason}` | Cierre de años: cerrar (cliente o administrador), reabrir (solo administrador entrando como el cliente) |
 | `GET /api/records?year=2025&scope=1&limit=100&offset=0` | Registros paginados |
 | `GET /api/export`, `GET /api/inventory.csv` | Respaldo e inventario |
 | `GET /api/audit`, `GET /health` | Auditoría y salud de la base |
 
-Para restaurar un respaldo mediante API: obtener la revisión actual de `/api/state`, enviar esa revisión junto con `state` del respaldo mediante `PUT /api/state`. Descargar antes la versión actual. Un conflicto 409 requiere revisar qué versión conservar; no reintentar automáticamente con la revisión nueva.
+Para restaurar un respaldo mediante API: obtener la revisión actual de `/api/state`, enviar esa revisión junto con `state` del respaldo mediante `PUT /api/state`. Descargar antes la versión actual. Un conflicto 409 requiere revisar qué versión conservar; no reintentar automáticamente con la revisión nueva. Un 423 indica que el respaldo cambia registros de un año cerrado.
 
 ## Pruebas y alcance verificado
 

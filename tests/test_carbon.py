@@ -262,6 +262,63 @@ class ApiTests(unittest.TestCase):
             writer.writerow(["'"+v if isinstance(v,str) and v.startswith(('=','+','-','@','\t','\r')) else v for v in values])
         self.assertEqual(r.content.decode('utf-8'),'﻿'+out.getvalue())
 
+    def test_closed_year_is_frozen_until_an_admin_reopens_it(self):
+        self.login();current=self.initialize();state=current['state']
+        before=self.client.get('/api/summary?year=2024').json()
+        site=state['SITES'][0]['id'];before_site=self.client.get(f'/api/summary?year=2024&site={site}').json()
+        self.assertEqual(self.client.post('/api/closures',headers=self.h,json={'year':1999}).status_code,422)
+        r=self.client.post('/api/closures',headers=self.h,json={'year':2024})
+        self.assertEqual(r.status_code,200,r.text)
+        self.assertEqual(r.json()['closedBy'],'one')
+        self.assertEqual(self.client.post('/api/closures',headers=self.h,json={'year':2024}).status_code,409)
+        self.assertEqual([c['year'] for c in self.client.get('/api/closures').json()],[2024])
+        closed=self.client.get('/api/summary?year=2024').json()
+        self.assertEqual(closed.pop('closed')['closedBy'],'one');self.assertEqual(closed,before)
+        i24=next(i for i,r in enumerate(state['REC']) if r['p'].startswith('2024'))
+        i25=next(i for i,r in enumerate(state['REC']) if r['p'].startswith('2025'))
+        def attempt(change):
+            after=copy.deepcopy(current['state']);change(after)
+            return self.client.post('/api/state/changes',headers=self.h,json=self.diff(current,after))
+        def edit(s):s['REC'][i24]['qty']+=1
+        def delete(s):s['REC'].pop(i24)
+        def add(s):s['REC'].append(dict(s['REC'][i24],rid='R99100',pair=None))
+        def move(s):s['REC'][i25]['p']=s['REC'][i24]['p']
+        for change in (edit,delete,add,move):
+            with self.subTest(change=change.__name__):
+                r=attempt(change);self.assertEqual(r.status_code,423,r.text);self.assertIn('2024',r.json()['detail'])
+        self.assertEqual(self.client.get('/api/state').json(),current)
+        # What the server derives from the factor is ignored, and 2025 stays editable.
+        def derived_and_open(s):s['REC'][i24]['kg']=1.0;s['REC'][i25]['qty']+=1
+        self.assertEqual(attempt(derived_and_open).status_code,200)
+        current=self.client.get('/api/state').json()
+        self.assertEqual(current['state']['REC'][i24],state['REC'][i24])
+        # A factor correction changes open years only; the closed year keeps its records and results.
+        factor=state['REC'][i24]['factor'];full=copy.deepcopy(current['state'])
+        next(f for f in full['FACTORS'] if f['id']==factor)['v']*=2
+        r=self.client.put('/api/state',headers=self.h,json={'revision':current['revision'],'state':full})
+        self.assertEqual(r.status_code,200,r.text)
+        current=self.client.get('/api/state').json()
+        self.assertEqual(current['state']['REC'][i24],state['REC'][i24])
+        changed=[r for r in current['state']['REC'] if r['factor']==factor and r['p'].startswith('2025')]
+        self.assertTrue(changed and all(abs(r['kg']-r['qty']*next(f for f in full['FACTORS'] if f['id']==factor)['v'])<1e-6 for r in changed))
+        closed=self.client.get('/api/summary?year=2024').json();closed.pop('closed');self.assertEqual(closed,before)
+        closed_site=self.client.get(f'/api/summary?year=2024&site={site}').json();closed_site.pop('closed');self.assertEqual(closed_site,before_site)
+        # Reopening: only an administrator working inside the account, with a reason.
+        self.assertEqual(self.client.post('/api/closures/2024/reopen',headers=self.h,json={'reason':'Corrección'}).status_code,403)
+        with db() as s:
+            s.execute("UPDATE carbon_accounts SET role='admin' WHERE username='two'")
+            one=s.execute("SELECT id FROM carbon_accounts WHERE username='one'").fetchone()['id']
+        self.login('two')
+        self.assertEqual(self.client.post(f'/api/admin/accounts/{one}/impersonate',headers=self.h).status_code,200)
+        self.assertEqual(self.client.post('/api/closures/2024/reopen',headers=self.h,json={'reason':''}).status_code,422)
+        r=self.client.post('/api/closures/2024/reopen',headers=self.h,json={'reason':'Factor de red corregido'})
+        self.assertEqual(r.status_code,200,r.text)
+        self.assertEqual(self.client.get('/api/closures').json(),[])
+        audit=self.client.get('/api/audit').json()
+        reopen=next(e for e in audit if e['action']=='reopen_year')['details']
+        self.assertEqual((reopen['reason'],reopen['by'],reopen['closedResults']['tCO2e']),('Factor de red corregido','Administrador de Invenzis',before['tCO2e']))
+        self.assertEqual(attempt(edit).status_code,200)
+
     def test_vercel_database_configuration(self):
         with patch.dict(os.environ, {'VERCEL':'1','DATABASE_URL':'postgresql://integration-test'}):
             self.assertEqual(database_url(),'postgresql://integration-test')

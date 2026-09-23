@@ -88,6 +88,7 @@ def initialize():
             'CREATE TABLE IF NOT EXISTS carbon_api_tokens (id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, label TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, created TEXT NOT NULL, last_used TEXT)',
             f'CREATE TABLE IF NOT EXISTS carbon_state_backups (account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, created TEXT NOT NULL, revision INTEGER NOT NULL, body {j} NOT NULL)',
             f'CREATE TABLE IF NOT EXISTS carbon_uploads (account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, batch TEXT NOT NULL, part INTEGER NOT NULL, created DOUBLE PRECISION NOT NULL, body {j} NOT NULL, PRIMARY KEY(account,batch,part))',
+            f'CREATE TABLE IF NOT EXISTS carbon_closures (account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, year INTEGER NOT NULL, closed_at TEXT NOT NULL, closed_by TEXT NOT NULL, results {j} NOT NULL, factors {j} NOT NULL, sites {j} NOT NULL, PRIMARY KEY(account,year))',
             'CREATE INDEX IF NOT EXISTS carbon_records_filter ON carbon_records(account,period,site,scope)',
             'CREATE INDEX IF NOT EXISTS carbon_api_tokens_account ON carbon_api_tokens(account)',
             'CREATE INDEX IF NOT EXISTS carbon_sessions_expiry ON carbon_sessions(expires)',

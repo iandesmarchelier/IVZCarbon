@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field
 
 from .invoice_parser import parse_document
 from . import inventory
-from .metrics import compute
 from .security import hash_password, verify_password, token_hash
 from .storage import db, initialize, decode, database_url, event
 
@@ -217,10 +216,39 @@ def start(body: Start, request: Request):
 
 @app.get('/api/summary')
 def summary(request: Request, year: int | None = None, site: str | None = None):
-    state = inventory.load(account_flexible(request)['id'])['state']
-    if not state:
-        raise HTTPException(404, 'Inicializá el inventario.')
-    return compute(state, year, site)
+    return inventory.summary(account_flexible(request)['id'], year, site)
+
+
+@app.get('/api/closures')
+def list_closures(request: Request):
+    return inventory.closures(account(request)['id'])
+
+
+class CloseYear(BaseModel):
+    year: int = Field(ge=1900, le=2200)
+
+
+def acting_as(user):
+    return 'Administrador de Invenzis' if user.get('impersonated_by') else user['username']
+
+
+@app.post('/api/closures')
+def close_year(body: CloseYear, request: Request):
+    user = account(request)
+    return inventory.close_year(user['id'], body.year, acting_as(user))
+
+
+class ReopenYear(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@app.post('/api/closures/{year}/reopen')
+def reopen_year(year: int, body: ReopenYear, request: Request):
+    user = account(request)
+    # Only an administrator, working inside the client's account, can reopen a closed year.
+    if not user.get('impersonated_by'):
+        raise HTTPException(403, 'Solo un administrador puede reabrir un año cerrado.')
+    return inventory.reopen_year(user['id'], year, acting_as(user), body.reason.strip())
 
 
 class TokenCreate(BaseModel):

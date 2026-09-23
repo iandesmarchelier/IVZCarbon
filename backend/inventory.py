@@ -230,10 +230,16 @@ def save(user, revision, action='save', full=None, catalogue=None, changes=None,
                 raw = dict(catalogue if catalogue is not None else body)
                 for kind, key in ROWS.items():
                     raw[kind] = _merge(old[kind], key, changes.get(kind, {}), order.get(kind))
+            closed = _closed_years(s, user)
+            _check_closed(old, raw, closed)
             state = normalize(raw)
             summary = compute(state)
         except (ValueError, TypeError, KeyError, AttributeError) as exc:
             raise HTTPException(422, str(exc)) from exc
+        for kind, key in ROWS.items():
+            # Rows of a closed year keep the emissions they had when it was closed, even if a factor changes later.
+            frozen = {item[key]: item for _, item in old[kind] if _year(item) in closed}
+            state[kind] = [frozen.get(item[key], item) for item in state[kind]]
         new_body = {k: v for k, v in state.items() if k not in ROWS}
         if row:
             s.execute('UPDATE carbon_states SET revision=revision+1,body=?,updated=? WHERE account=?', (s.json(new_body), updated, user))
@@ -248,3 +254,89 @@ def save(user, revision, action='save', full=None, catalogue=None, changes=None,
         written = {kind: _sync(s, user, kind, old[kind], state[kind]) for kind in ROWS}
         event(s, user, action, current + 1, {'records': len(state['REC']), 'kg': summary['kg'], 'written': written})
     return {'revision': current + 1, 'updated': updated, 'summary': summary}
+
+
+# Year closing: a closed year keeps the results it had when it was closed. Its records cannot be
+# added, edited or removed until an administrator reopens it, and a later factor change does not
+# alter it. Emissions fields that the server derives from the factor may still differ in what the
+# screen sends; those are ignored.
+DERIVED = {'kg', 'bio', 'scope', 'cat', 'unit', 'sub'}
+CLOSED = 'El año {} está cerrado. Para cambiar sus datos, un administrador tiene que reabrirlo.'
+
+
+def _year(item):
+    period = item.get('p') if isinstance(item, dict) else None
+    return int(period[:4]) if isinstance(period, str) and period[:4].isdigit() else None
+
+
+def _closed_years(s, user):
+    return {r['year'] for r in s.execute('SELECT year FROM carbon_closures WHERE account=?', (user,)).fetchall()}
+
+
+def _check_closed(old, raw, closed):
+    if not closed:
+        return
+    essential = lambda item: {k: v for k, v in item.items() if k not in DERIVED}
+    for kind, key in ROWS.items():
+        before = {item[key]: item for _, item in old[kind]}
+        after = {item.get(key): item for item in raw.get(kind) or [] if isinstance(item, dict)}
+        for k in before.keys() | after.keys():
+            a, b = before.get(k), after.get(k)
+            years = {_year(x) for x in (a, b) if x} & closed
+            if years and (a is None or b is None or essential(a) != essential(b)):
+                raise HTTPException(423, CLOSED.format(min(years)))
+
+
+def closures(user):
+    with db() as s:
+        rows = s.execute('SELECT year,closed_at,closed_by,results FROM carbon_closures WHERE account=? ORDER BY year', (user,)).fetchall()
+    return [{'year': r['year'], 'closedAt': r['closed_at'], 'closedBy': r['closed_by'], 'tCO2e': decode(r['results'])['tCO2e']} for r in rows]
+
+
+def close_year(user, year, by):
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as s:
+        row, body = _catalogue(s, user, lock=True)  # no save can interleave
+        if not row:
+            raise HTTPException(404, 'Inicializá el inventario.')
+        if not any(p.startswith(f'{year}-') for p in body['PERIODS']):
+            raise HTTPException(422, f'No hay períodos de {year}.')
+        if year in _closed_years(s, user):
+            raise HTTPException(409, f'El año {year} ya está cerrado.')
+        state = dict(body, **{kind: [item for _, item in _rows(s, user, kind)] for kind in ROWS})
+        results = compute(normalize(state), year)
+        s.execute('INSERT INTO carbon_closures (account,year,closed_at,closed_by,results,factors,sites) VALUES (?,?,?,?,?,?,?)',
+                  (user, year, now, by, s.json(results), s.json(body['FACTORS']), s.json(body['SITES'])))
+        event(s, user, 'close_year', row['revision'], {'year': year, 'by': by, 'tCO2e': results['tCO2e'], 'records': results['count']})
+    return {'year': year, 'closedAt': now, 'closedBy': by, 'tCO2e': results['tCO2e']}
+
+
+def reopen_year(user, year, by, reason):
+    with db() as s:
+        row, _ = _catalogue(s, user, lock=True)
+        closure = s.execute('SELECT results FROM carbon_closures WHERE account=? AND year=?', (user, year)).fetchone()
+        if not closure:
+            raise HTTPException(404, f'El año {year} no está cerrado.')
+        s.execute('DELETE FROM carbon_closures WHERE account=? AND year=?', (user, year))
+        # The event keeps what the year said while it was closed.
+        event(s, user, 'reopen_year', row['revision'], {'year': year, 'by': by, 'reason': reason, 'closedResults': decode(closure['results'])})
+    return {'ok': True}
+
+
+def summary(user, year=None, site=None):
+    """Results for the whole inventory or a year and site; a closed year answers with what it had when closed."""
+    if year:
+        with db() as s:
+            closure = s.execute('SELECT closed_at,closed_by,results,factors,sites FROM carbon_closures WHERE account=? AND year=?',
+                                (user, year)).fetchone()
+        if closure:
+            closed = {'closedAt': closure['closed_at'], 'closedBy': closure['closed_by']}
+            if not site:
+                return dict(decode(closure['results']), closed=closed)
+            state = load(user)['state']
+            state.update(FACTORS=decode(closure['factors']), SITES=decode(closure['sites']))
+            return dict(compute(state, year, site), closed=closed)
+    state = load(user)['state']
+    if not state:
+        raise HTTPException(404, 'Inicializá el inventario.')
+    return compute(state, year, site)

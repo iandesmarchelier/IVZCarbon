@@ -87,9 +87,64 @@
     throw Error('El inventario cambió mientras se cargaba. Recargá la página.');
   }
   let company='IVZ Carbon';
-  let username='';
+  let username='', impersonating=false;
+  /* Closed years keep their results and cannot be edited until an administrator reopens them.
+     The server enforces it; the screen undoes such an edit right away instead of failing to save. */
+  let closures=[], closedYears=new Set();
+  const DERIVED=['kg','bio','scope','cat','unit','sub'];
+  const yearOf=item=>+String(item&&item.p||'').slice(0,4);
+  const essential=item=>{const copy={...item};for(const k of DERIVED)delete copy[k];return JSON.stringify(copy);};
+  async function loadClosures(){closures=await api('/api/closures');closedYears=new Set(closures.map(c=>c.year));}
+  function enforceClosed(){
+    if(!closedYears.size||!base)return;
+    let reverted=0;
+    for(const [kind,key] of Object.entries(ROWS)){
+      const list=arrays[kind], seen=new Set();
+      for(let i=list.length-1;i>=0;i--){
+        const item=list[i], json=base.rows[kind].get(item[key]), old=json&&JSON.parse(json);
+        seen.add(item[key]);
+        if(!closedYears.has(yearOf(item))&&!(old&&closedYears.has(yearOf(old))))continue;
+        if(old&&essential(old)===essential(item))continue;
+        if(old)list[i]=old;else list.splice(i,1);
+        reverted++;
+      }
+      for(const [id,json] of base.rows[kind])if(!seen.has(id)){const old=JSON.parse(json);if(closedYears.has(yearOf(old))){list.push(old);reverted++;}}
+    }
+    if(reverted){render();toast('Ese año está cerrado: el cambio no se guardó.','!');}
+  }
+  function renderYears(){
+    const box=document.getElementById('account-years');if(!box)return;
+    const years=[...new Set(PERIODS.map(p=>+p.slice(0,4)))].sort();
+    const byYear=Object.fromEntries(closures.map(c=>[c.year,c]));
+    box.innerHTML='<p style="margin-bottom:4px"><b>Cierre de años</b></p><p style="margin-top:0;color:#65786c;font-size:12.5px">Un año cerrado conserva sus resultados y ya no se puede editar. Solo un administrador de Invenzis puede reabrirlo.</p>'+
+      years.map(y=>{const c=byYear[y];return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-top:1px solid #e3ebe5"><span><b>'+y+'</b> · '+(c?'Cerrado el '+esc(new Date(c.closedAt).toLocaleDateString('es'))+' por '+esc(c.closedBy):'Abierto')+'</span>'+
+        (c?(impersonating?'<button class="btn" data-reopen="'+y+'">Reabrir</button>':''):'<button class="btn" data-close="'+y+'">Cerrar año</button>')+'</div>';}).join('');
+    for(const b of box.querySelectorAll('[data-close]'))b.onclick=()=>closeYear(+b.dataset.close,b);
+    for(const b of box.querySelectorAll('[data-reopen]'))b.onclick=()=>reopenYear(+b.dataset.reopen,b);
+  }
+  async function closeYear(year,button){
+    const rows=REC.filter(r=>yearOf(r)===year), pending=rows.filter(r=>r.cls&&r.cls.state!=='auto').length;
+    const tonnes=(rows.reduce((a,r)=>a+(r.kg||0),0)/1000).toLocaleString('es',{maximumFractionDigits:1});
+    if(!confirm('¿Cerrar '+year+'? '+rows.length.toLocaleString('es')+' registros, '+tonnes+' tCO₂e.'+
+      (pending?'\n\nAtención: '+pending+' registros de '+year+' todavía están pendientes de revisar.':'')+
+      '\n\nDespués no se van a poder agregar, editar ni borrar registros de ese año, y sus resultados quedan fijos.'))return;
+    button.disabled=true;
+    try{
+      if(!await save())throw Error('No se pudieron guardar los cambios pendientes.');
+      await api('/api/closures',{method:'POST',body:JSON.stringify({year})});
+      await loadClosures();renderYears();toast(year+' cerrado');
+    }catch(e){button.disabled=false;document.getElementById('account-error').textContent=e.message;}
+  }
+  async function reopenYear(year,button){
+    const reason=prompt('Motivo para reabrir '+year+' (queda registrado):');
+    if(!reason||!reason.trim())return;
+    button.disabled=true;
+    try{await api('/api/closures/'+year+'/reopen',{method:'POST',body:JSON.stringify({reason:reason.trim()})});await loadClosures();renderYears();toast(year+' reabierto');}
+    catch(e){button.disabled=false;document.getElementById('account-error').textContent=e.message;}
+  }
   document.getElementById('btn-user').onclick=()=>{
-    openModal('<div class="modal-h"><h3>Configuración de la cuenta</h3></div><div class="modal-b"><p><b>Usuario</b><br>'+esc(username)+'</p><p><b>Organización</b><br>'+esc(company)+'</p><p id="account-error" role="alert"></p></div><div class="modal-f"><button class="btn" onclick="closeModal()">Volver</button><button class="btn" id="account-logout">Cerrar sesión</button></div>',{narrow:true});
+    openModal('<div class="modal-h"><h3>Configuración de la cuenta</h3></div><div class="modal-b"><p><b>Usuario</b><br>'+esc(username)+'</p><p><b>Organización</b><br>'+esc(company)+'</p><div id="account-years"></div><p id="account-error" role="alert"></p></div><div class="modal-f"><button class="btn" onclick="closeModal()">Volver</button><button class="btn" id="account-logout">Cerrar sesión</button></div>',{narrow:true});
+    renderYears();
     document.getElementById('account-logout').onclick=async event=>{
       const button=event.currentTarget;button.disabled=true;
       try{
@@ -135,12 +190,15 @@
   async function save(){
     if(busy){await pendingSave;return save();}
     if(!ready||blocked)return false;
+    enforceClosed();
     const {any,out,next}=diff();
     if(!any)return true;
     busy=true;
     pendingSave=(async()=>{
       try{const result=await send(out);revision=result.revision;base=next;lastSaveError='';return true;}
-      catch(e){if(e.status===409||e.status===401)blocked=true;showSaveError((e.status===401?'La sesión venció. Descargá un respaldo antes de volver a ingresar. ':e.status===409?'Conflicto. Descargá un respaldo y recargá. ':'No se guardó: ')+e.message);return false;}
+      catch(e){
+        if(e.status===423){await loadClosures().catch(()=>{});enforceClosed();return false;}  // closed from another tab
+        if(e.status===409||e.status===401)blocked=true;showSaveError((e.status===401?'La sesión venció. Descargá un respaldo antes de volver a ingresar. ':e.status===409?'Conflicto. Descargá un respaldo y recargá. ':'No se guardó: ')+e.message);return false;}
       finally{busy=false;}
     })();
     return pendingSave;
@@ -165,9 +223,10 @@
   }
   async function boot(){
     try{
-      const [result,user]=await Promise.all([loadInventory(),api('/api/me')]);
+      const [result,user]=await Promise.all([loadInventory(),api('/api/me'),loadClosures()]);
       company=user.company;
       username=user.username;
+      impersonating=!!user.impersonating;
       document.getElementById('profile-name').textContent=username;
       document.getElementById('profile-company').textContent=company;
       document.getElementById('profile-avatar').textContent=username.slice(0,2).toUpperCase();
