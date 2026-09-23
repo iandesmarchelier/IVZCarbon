@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import uuid
+from datetime import datetime, timezone
 from .security import hash_password
 from .storage import initialize, db
 
@@ -12,8 +13,9 @@ def create_user(username, company, password):
         raise ValueError('Usuario y empresa obligatorios.')
     initialize()
     with db() as s:
-        s.execute('INSERT INTO carbon_accounts VALUES (?,?,?,?)',
-                  (str(uuid.uuid4()), username.strip().lower(), company.strip(), hash_password(password)))
+        s.execute('INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?)',
+                  (str(uuid.uuid4()), username.strip().lower(), company.strip(), hash_password(password),
+                   'client', True, datetime.now(timezone.utc).isoformat()))
 
 
 if __name__ == '__main__':
