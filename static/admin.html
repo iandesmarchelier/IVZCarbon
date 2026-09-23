@@ -25,7 +25,7 @@ button.ghost{border-color:transparent;background:transparent}
 button.danger{color:var(--danger);border-color:#e6c4c4}
 button:disabled{opacity:.5;cursor:default}
 .row-actions{display:flex;gap:6px;flex-wrap:wrap}
-.form2{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}
+.form2{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end}
 @media (max-width:560px){header{padding:14px 16px;flex-wrap:wrap;gap:8px}main{padding:0 12px}.form2{grid-template-columns:1fr}}
 label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:4px}
 input{font:inherit;width:100%;padding:9px 10px;border-radius:8px;border:1px solid #bccbbf}
@@ -49,6 +49,7 @@ dialog::backdrop{background:#0004}
       <form id="createForm" class="form2">
         <div><label>Usuario</label><input name="username" required maxlength="150" placeholder="ej.: acme"></div>
         <div><label>Empresa</label><input name="company" required maxlength="200" placeholder="ej.: ACME S.A."></div>
+        <div><label>Correo para el código de acceso</label><input name="email" type="email" required maxlength="254" placeholder="ej.: ana@acme.com"></div>
         <button class="primary" type="submit">Crear cuenta</button>
       </form>
       <p id="err"></p>
@@ -57,7 +58,7 @@ dialog::backdrop{background:#0004}
   <div class="card">
     <div class="card-h"><h2>Cuentas</h2><span class="sub" id="count"></span></div>
     <div class="card-b" style="padding:0;overflow-x:auto">
-      <table style="min-width:640px"><thead><tr><th>Usuario</th><th>Empresa</th><th>Rol</th><th>Estado</th><th>Última actividad</th><th></th></tr></thead>
+      <table style="min-width:760px"><thead><tr><th>Usuario</th><th>Correo</th><th>Empresa</th><th>Rol</th><th>Estado</th><th>Última actividad</th><th></th></tr></thead>
         <tbody id="rows"></tbody></table>
     </div>
   </div>
@@ -87,16 +88,18 @@ async function loadAccounts(){
   document.getElementById('rows').innerHTML=rows.length?rows.map(r=>`
     <tr>
       <td>${esc(r.username)}</td>
+      <td>${r.email?esc(r.email):'<span class="pill inactive" title="No puede ingresar hasta tener un correo">Sin correo</span>'}</td>
       <td>${esc(r.company)}</td>
       <td><span class="pill ${r.role}">${r.role==='admin'?'Admin':'Cliente'}</span></td>
       <td>${r.active?'Activa':'<span class=\"pill inactive\">Desactivada</span>'}</td>
       <td>${esc((r.updated||r.created||'').slice(0,10)||'—')}</td>
       <td><div class="row-actions">
         ${r.role!=='admin'?`<button data-act="login" data-id="${r.id}" data-name="${esc(r.company)}">Entrar como</button>`:''}
+        <button data-act="email" data-id="${r.id}" data-user="${esc(r.username)}" data-email="${esc(r.email)}">Cambiar correo</button>
         <button data-act="reset" data-id="${r.id}" data-user="${esc(r.username)}">Resetear contraseña</button>
         <button class="${r.active?'danger':''}" data-act="toggle" data-id="${r.id}" data-active="${r.active?1:0}">${r.active?'Desactivar':'Reactivar'}</button>
       </div></td>
-    </tr>`).join(''):'<tr><td colspan="6" class="empty">Todavía no hay cuentas de clientes.</td></tr>';
+    </tr>`).join(''):'<tr><td colspan="7" class="empty">Todavía no hay cuentas de clientes.</td></tr>';
 }
 document.getElementById('rows').addEventListener('click',async e=>{
   const b=e.target.closest('button[data-act]'); if(!b) return;
@@ -107,6 +110,11 @@ document.getElementById('rows').addEventListener('click',async e=>{
       if(!confirm('Vas a entrar como '+b.dataset.name+'. ¿Continuar?')) return;
       await api('/api/admin/accounts/'+id+'/impersonate',{method:'POST'});
       location.href='/';
+    } else if(b.dataset.act==='email'){
+      const email=prompt('Correo donde '+b.dataset.user+' recibe el código de acceso:',b.dataset.email);
+      if(email==null) return;
+      await api('/api/admin/accounts/'+id+'/email',{method:'PUT',body:JSON.stringify({email})});
+      loadAccounts();
     } else if(b.dataset.act==='reset'){
       if(!confirm('¿Resetear la contraseña de '+b.dataset.user+'? Se cierran sus sesiones activas.')) return;
       const r=await api('/api/admin/accounts/'+id+'/reset-password',{method:'POST'});

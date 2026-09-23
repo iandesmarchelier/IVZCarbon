@@ -49,16 +49,49 @@ class ApiTests(unittest.TestCase):
         self.env=patch.dict(os.environ, {'CARBON_DATABASE_URL':'','CARBON_SQLITE_PATH':str(Path(self.tmp.name)/'carbon.sqlite'),'CARBON_ENV':'test'})
         self.env.start()
         self.client=TestClient(app).__enter__()
-        create_user('one','Empresa uno','test-password-123')
-        create_user('two','Empresa dos','test-password-123')
+        create_user('one','Empresa uno','test-password-123','one@example.com')
+        create_user('two','Empresa dos','test-password-123','two@example.com')
         self.h={'X-IVZ-Carbon':'1'}
+        self.codes=[]
+        self.mailer=patch('backend.mfa.send_code',lambda email,code:self.codes.append((email,code)))
+        self.mailer.start()
 
     def tearDown(self):
-        self.client.__exit__(None,None,None);self.env.stop();self.tmp.cleanup()
+        self.mailer.stop();self.client.__exit__(None,None,None);self.env.stop();self.tmp.cleanup()
 
-    def login(self,user='one'):
+    def password_step(self,user='one'):
         r=self.client.post('/api/login',headers=self.h,json={'username':user,'password':'test-password-123'})
         self.assertEqual(r.status_code,200,r.text)
+        self.assertEqual(r.json(),{'mfa':True,'email':user[:2]+'•••@example.com'})
+        return self.codes[-1][1]
+
+    def verify(self,code):
+        return self.client.post('/api/login/verify',headers=self.h,json={'code':code})
+
+    def login(self,user='one'):
+        r=self.verify(self.password_step(user))
+        self.assertEqual(r.status_code,200,r.text)
+
+    def test_email_code_is_required_single_use_and_limited(self):
+        code=self.password_step()
+        self.assertEqual(self.client.get('/api/state').status_code,401)
+        wrong=('1' if code[0]!='1' else '2')+code[1:]
+        self.assertEqual(self.verify(wrong).status_code,401)
+        self.assertEqual(self.verify(code).status_code,200)
+        self.assertEqual(self.client.get('/api/me').json()['username'],'one')
+        self.assertEqual(self.verify(code).status_code,410)
+        self.client.post('/api/logout',headers=self.h)
+        code=self.password_step();wrong=('1' if code[0]!='1' else '2')+code[1:]
+        for _ in range(4):self.assertEqual(self.verify(wrong).status_code,401)
+        self.assertEqual(self.verify(wrong).status_code,410)
+        self.assertEqual(self.verify(code).status_code,410)
+        self.assertEqual(self.client.post('/api/login/resend',headers=self.h,json={}).status_code,410)
+
+    def test_account_without_email_cannot_log_in(self):
+        with db() as s:s.execute("UPDATE carbon_accounts SET email=NULL WHERE username='one'")
+        r=self.client.post('/api/login',headers=self.h,json={'username':'one','password':'test-password-123'})
+        self.assertEqual(r.status_code,403)
+        self.assertEqual(self.codes,[])
 
     def initialize(self,mode='demo'):
         r=self.client.post('/api/initialize',headers=self.h,json={'mode':mode})

@@ -70,6 +70,8 @@ def initialize():
             f'CREATE TABLE IF NOT EXISTS carbon_records (account TEXT NOT NULL REFERENCES carbon_accounts(id), id TEXT NOT NULL, period TEXT NOT NULL, site TEXT NOT NULL, scope INTEGER NOT NULL CHECK(scope IN (1,2,3)), factor TEXT NOT NULL, quantity DOUBLE PRECISION NOT NULL, kg DOUBLE PRECISION NOT NULL, body {j} NOT NULL, PRIMARY KEY(account,id))',
             f'CREATE TABLE IF NOT EXISTS carbon_events (id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id), action TEXT NOT NULL, revision INTEGER NOT NULL, created TEXT NOT NULL, details {j} NOT NULL)',
             'CREATE TABLE IF NOT EXISTS carbon_api_tokens (id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, label TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, created TEXT NOT NULL, last_used TEXT)',
+            'CREATE TABLE IF NOT EXISTS carbon_login_challenges (token TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, '
+            'code TEXT NOT NULL, expires DOUBLE PRECISION NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, sends INTEGER NOT NULL DEFAULT 1, sent_at DOUBLE PRECISION NOT NULL)',
             'CREATE INDEX IF NOT EXISTS carbon_records_filter ON carbon_records(account,period,site,scope)',
             'CREATE INDEX IF NOT EXISTS carbon_api_tokens_account ON carbon_api_tokens(account)',
             'CREATE INDEX IF NOT EXISTS carbon_sessions_expiry ON carbon_sessions(expires)',
@@ -81,6 +83,7 @@ def initialize():
         _ensure_column(s, 'carbon_accounts', 'active', 'active BOOLEAN NOT NULL DEFAULT TRUE')
         _ensure_column(s, 'carbon_accounts', 'created', "created TEXT NOT NULL DEFAULT ''")
         _ensure_column(s, 'carbon_sessions', 'impersonated_by', 'impersonated_by TEXT')
+        _ensure_column(s, 'carbon_accounts', 'email', 'email TEXT')
 
 
 def _column_exists(s, table, column):

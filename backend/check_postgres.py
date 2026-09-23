@@ -3,6 +3,7 @@ import json
 import os
 import secrets
 import uuid
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from .app import app, ROOT
 from .manage import create_user
@@ -17,11 +18,14 @@ def main():
     user=None
     try:
         with TestClient(app) as client:
-            create_user(username,'Prueba PostgreSQL',password)
+            create_user(username,'Prueba PostgreSQL',password,username+'@example.com')
             with db() as s:
                 user=s.execute('SELECT id FROM carbon_accounts WHERE username=?',(username,)).fetchone()['id']
             h={'X-IVZ-Carbon':'1'}
-            r=client.post('/api/login',headers=h,json={'username':username,'password':password});r.raise_for_status()
+            codes=[]
+            with patch('backend.mfa.send_code',lambda email,code:codes.append(code)):
+                r=client.post('/api/login',headers=h,json={'username':username,'password':password});r.raise_for_status()
+            r=client.post('/api/login/verify',headers=h,json={'code':codes[-1]});r.raise_for_status()
             r=client.post('/api/initialize',headers=h,json={'mode':'demo'});r.raise_for_status()
             body=r.json()
             body['state']['SITES'][0]['name']='Persistencia PostgreSQL'

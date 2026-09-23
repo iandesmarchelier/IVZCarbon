@@ -1,6 +1,6 @@
 # IVZ Carbon · backend Python y PostgreSQL
 
-Aplicación independiente basada en `IVZCarbon V3.5 - Fix bugs.html`. El HTML original permanece en su ubicación; la copia conectada al backend está en `static/index.html`. El backend del Sustainability Hub no se modifica.
+Aplicación publicada en https://ivzcarbon.vercel.app, basada en `IVZCarbon V3.5 - Fix bugs.html`. El HTML original permanece en su ubicación; la copia conectada al backend está en `static/index.html`. El backend del Sustainability Hub no se modifica.
 
 ## PostgreSQL con Docker
 
@@ -10,7 +10,7 @@ Desde esta carpeta, con Docker Desktop instalado y activo:
 Copy-Item .env.example .env
 # Completar CARBON_DB_PASSWORD en .env con una contraseña aleatoria hexadecimal.
 docker compose up -d --build
-docker compose exec app python -m backend.manage administrador "Mi empresa"
+docker compose exec app python -m backend.manage administrador "Mi empresa" correo@empresa.com
 ```
 
 El último comando solicita una contraseña de al menos 12 caracteres. Abrir http://127.0.0.1:8001 y elegir inventario vacío o datos demo. PostgreSQL 17 usa un volumen persistente y no expone su puerto al exterior. La app crea el esquema versión 1 automáticamente bajo un bloqueo de migración.
@@ -24,7 +24,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 $env:CARBON_DATABASE_URL = 'postgresql://usuario:password@servidor:5432/carbon?sslmode=require'
-python -m backend.manage administrador "Mi empresa"
+python -m backend.manage administrador "Mi empresa" correo@empresa.com
 python -m uvicorn backend.app:app --host 127.0.0.1 --port 8001
 ```
 
@@ -84,7 +84,7 @@ node --check carbon/static/bridge.js
 
 La prueba de equivalencia compara 2.658 registros contra resultados extraídos del motor JavaScript V3.5. La suite cubre sesiones, aislamiento, conflictos, validación, recálculo, inicialización y exportación. Las pruebas locales usan SQLite. Para comprobar una instancia PostgreSQL dedicada, desde esta carpeta y con `CARBON_DATABASE_URL` configurada: `python -m backend.check_postgres`.
 
-Verificado en esta computadora: siete pruebas automáticas, prueba real contra PostgreSQL 17.11 (JSONB, persistencia, consulta de registros y conflicto entre revisiones), ingreso y creación de una planta desde el navegador, recuperación al recargar y navegación por clasificación, incertidumbre, movimientos y factores sin errores JavaScript. No se publicó esta aplicación en Internet.
+Verificado en esta computadora: nueve pruebas automáticas, prueba real contra PostgreSQL 17.11 (JSONB, persistencia, consulta de registros y conflicto entre revisiones), ingreso y creación de una planta desde el navegador, recuperación al recargar y navegación por clasificación, incertidumbre, movimientos y factores sin errores JavaScript. Publicada en Vercel el 18/09/2026 con PostgreSQL de Neon independiente del Hub. Se verificaron `/health`, acceso demo y guardado automático sin barra inferior.
 
 ## Límites heredados del prototipo
 
