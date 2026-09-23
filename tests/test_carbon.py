@@ -1,4 +1,6 @@
 import copy
+import csv
+import io
 import json
 import os
 from pathlib import Path
@@ -240,6 +242,25 @@ class ApiTests(unittest.TestCase):
             backups=s.execute('SELECT body FROM carbon_state_backups WHERE account=?',(user,)).fetchall()
         self.assertNotIn('REC',body)
         self.assertEqual([decode(b['body']) for b in backups],[current['state']])
+
+    def test_downloads_match_the_whole_inventory(self):
+        self.login()
+        self.assertEqual(self.client.get('/api/export').json(),{'revision':0,'state':None,'updated':None})
+        current=self.initialize()
+        big=copy.deepcopy(current['state'])  # several streamed chunks and database batches
+        for i in range(3):
+            big['REC']+=[dict(r,rid=f'{r["rid"]}-{i}',pair=None) for r in current['state']['REC']]
+        self.assertEqual(self.client.put('/api/state',headers=self.h,json={'revision':current['revision'],'state':big}).status_code,200)
+        current=self.client.get('/api/state').json()
+        self.assertEqual(self.client.get('/api/export').json(),current)
+        r=self.client.get('/api/inventory.csv')
+        self.assertIn('attachment',r.headers['content-disposition'])
+        out=io.StringIO(newline='');writer=csv.writer(out)
+        fields=['rid','p','site','scope','cat','factor','qty','unit','kg','bio','source'];writer.writerow(fields)
+        for row in current['state']['REC']:
+            values=[row.get(f,'') for f in fields]
+            writer.writerow(["'"+v if isinstance(v,str) and v.startswith(('=','+','-','@','\t','\r')) else v for v in values])
+        self.assertEqual(r.content.decode('utf-8'),'﻿'+out.getvalue())
 
     def test_vercel_database_configuration(self):
         with patch.dict(os.environ, {'VERCEL':'1','DATABASE_URL':'postgresql://integration-test'}):

@@ -7,6 +7,7 @@ caps at 4.5 MB. Every save still validates and computes the complete inventory w
 normalize() and compute(), so results are exactly those of the single-body format.
 """
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from .metrics import normalize, compute
@@ -85,6 +86,25 @@ def load(user):
             return {'revision': 0, 'state': None, 'updated': None}
         state = dict(body, **{kind: [item for _, item in _rows(s, user, kind)] for kind in ROWS})
     return {'revision': row['revision'], 'state': state, 'updated': row['updated']}
+
+
+@contextmanager
+def snapshot(user):
+    """One consistent view for long downloads: ({'revision', 'updated', 'state': catalogue} or None, rows(kind)).
+
+    rows(kind) yields the items in order, reading them from the database in batches instead of all at once."""
+    with db() as s:
+        if s.postgres:
+            s.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+        row, body = _catalogue(s, user)
+
+        def rows(kind):
+            table = 'carbon_records WHERE account=?' if kind == 'REC' else "carbon_entities WHERE account=? AND kind='MOV'"
+            cursor = s.execute(f'SELECT body FROM {table} ORDER BY seq,id', (user,))
+            while batch := cursor.fetchmany(1000):
+                for r in batch:
+                    yield decode(r['body'])
+        yield (row and {'revision': row['revision'], 'updated': row['updated'], 'state': body}), rows
 
 
 def load_catalogue(user):

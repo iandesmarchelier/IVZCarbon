@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .invoice_parser import parse_document
@@ -291,23 +291,59 @@ def audit(request: Request):
     return [dict(r, details=decode(r['details'])) for r in rows]
 
 
+# Downloads are streamed: a whole inventory can exceed Vercel's 4.5 MB limit for regular responses.
+def joined(parts, size=65536):
+    """Comma-join JSON parts, yielding ~64 KB chunks."""
+    buffer, length, first = [], 0, True
+    for part in parts:
+        buffer.append(part if first else ', ' + part)
+        first, length = False, length + len(part)
+        if length > size:
+            yield ''.join(buffer)
+            buffer, length = [], 0
+    if buffer:
+        yield ''.join(buffer)
+
+
 @app.get('/api/export')
 def export(request: Request):
-    state = inventory.load(account(request)['id'])
-    return Response(json.dumps(state, ensure_ascii=False), media_type='application/json', headers={'Content-Disposition': 'attachment; filename="ivz-carbon-backup.json"'})
+    user = account(request)['id']
+
+    def chunks():
+        with inventory.snapshot(user) as (head, rows):
+            if not head:
+                yield json.dumps({'revision': 0, 'state': None, 'updated': None})
+                return
+            state = head.pop('state')
+            yield json.dumps(head, ensure_ascii=False)[:-1] + ', "state": ' + json.dumps(state, ensure_ascii=False)[:-1]
+            for i, kind in enumerate(inventory.ROWS):
+                yield (', ' if state or i else '') + json.dumps(kind) + ': ['
+                yield from joined(json.dumps(item, ensure_ascii=False) for item in rows(kind))
+                yield ']'
+            yield '}}'
+    return StreamingResponse(chunks(), media_type='application/json', headers={'Content-Disposition': 'attachment; filename="ivz-carbon-backup.json"'})
 
 
 @app.get('/api/inventory.csv')
 def inventory_csv(request: Request):
-    state = inventory.load(account(request)['id'])['state']
-    out = io.StringIO(newline='')
-    writer = csv.writer(out)
+    user = account(request)['id']
     fields = ['rid', 'p', 'site', 'scope', 'cat', 'factor', 'qty', 'unit', 'kg', 'bio', 'source']
-    writer.writerow(fields)
-    for row in (state or {}).get('REC', []):
-        values = [row.get(f, '') for f in fields]
-        writer.writerow(["'"+v if isinstance(v,str) and v.startswith(('=', '+', '-', '@', '\t', '\r')) else v for v in values])
-    return Response('\ufeff'+out.getvalue(), media_type='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename="inventario-carbon.csv"'})
+
+    def chunks():
+        out = io.StringIO(newline='')
+        writer = csv.writer(out)
+        writer.writerow(fields)
+        yield '\ufeff'
+        with inventory.snapshot(user) as (head, rows):
+            for row in rows('REC') if head else ():
+                values = [row.get(f, '') for f in fields]
+                writer.writerow(["'"+v if isinstance(v,str) and v.startswith(('=', '+', '-', '@', '\t', '\r')) else v for v in values])
+                if out.tell() > 65536:
+                    yield out.getvalue()
+                    out.seek(0)
+                    out.truncate()
+        yield out.getvalue()
+    return StreamingResponse(chunks(), media_type='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename="inventario-carbon.csv"'})
 
 
 @app.post('/api/parse-document')
