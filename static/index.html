@@ -3742,6 +3742,24 @@ function wmModalHTML(){
 function ensurePeriod(p){ if(p && !PERIODS.includes(p)){ PERIODS.push(p); PERIODS.sort(); } }
 function yearsAvailable(){ return [...new Set(PERIODS.map(p=>p.slice(0,4)))].sort().reverse(); }
 function validPeriod(s){ return /^20\d{2}-(0[1-9]|1[0-2])$/.test(String(s||'').trim()); }
+/* Una fecha como la deja Excel al abrir o guardar la planilla: 2026-08, 2026-08-15, 08/2026, 15/08/2026,
+   ago-26, agosto 2026, Aug-26 o el número de serie de una celda de fecha (.xlsx). Devuelve AAAA-MM-DD
+   (día 01 si solo viene el mes) o null. Día/mes/año como se escribe en Argentina y Uruguay. */
+const MONTH_NAMES={ene:1,jan:1,feb:2,mar:3,abr:4,apr:4,may:5,jun:6,jul:7,ago:8,aug:8,sep:9,set:9,oct:10,nov:11,dic:12,dec:12};
+function toISODate(v){
+  const s=String(v==null?'':v).trim().toLowerCase(); if(!s) return null;
+  const out=(y,m,d)=>{ y=+y; m=+m; d=+(d||1); if(y<100) y+=2000;
+    if(!(y>=2000&&y<=2100&&m>=1&&m<=12&&d>=1&&d<=31)) return null;
+    return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0'); };
+  let x;
+  if((x=s.match(/^(\d{4})[-\/.](\d{1,2})(?:[-\/.](\d{1,2}))?(?:[t\s].*)?$/))) return out(x[1],x[2],x[3]);
+  if((x=s.match(/^(\d{4})(\d{2})$/))) return out(x[1],x[2]);
+  if((x=s.match(/^(\d{1,2})[-\/.](\d{4})$/))) return out(x[2],x[1]);
+  if((x=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2}|\d{4})$/))) return out(x[3],x[2],x[1]);
+  if((x=s.match(/^(?:(\d{1,2})[\s\-\/.]+(?:de\s+)?)?([a-z]{3})[a-z]*\.?[\s\-\/.]+(?:de\s+)?(\d{2}|\d{4})$/))&&MONTH_NAMES[x[2]]) return out(x[3],MONTH_NAMES[x[2]],x[1]);
+  if(/^\d{5}(\.\d+)?$/.test(s)){ const n=+s; if(n>=36526&&n<=73415){ const d=new Date(Date.UTC(1899,11,30)+Math.floor(n+1/1440)*86400000);  /* un minuto de tolerancia: una fecha guardada desde otra zona horaria queda en 46234,9994 */ return out(d.getUTCFullYear(),d.getUTCMonth()+1,d.getUTCDate()); } }
+  return null;
+}
 
 /* ------------------------------ utilidades -------------------------------- */
 const normTxt = s=>String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
@@ -4463,9 +4481,9 @@ const DATA_TYPES = {
    {k:'proveedor',l:'Proveedor',syn:['proveedor','provider','acreedor']},{k:'material',l:'Material',req:1,syn:['material','descripcion','texto_breve','articulo','denominacion']},
    {k:'grupo_material',l:'Grupo de material',syn:['grupo_material','grupo','matkl']},{k:'cantidad',l:'Cantidad',req:1,syn:['cantidad','qty','menge']},
    {k:'unidad',l:'Unidad',syn:['unidad','uom','meins']},{k:'importe',l:'Importe',syn:['importe','monto','valor','netwr']},
-   {k:'factor',l:'Factor de emisión',syn:['factor','factor_emision','ef']}],
-  sample:[['2026-08','4500021777','10','Planta Vicente López','Acería del Centro S.A.','Acero aleado','ZACE01','18500','kg','25530','FE-030'],
-          ['2026-08','4500021780','10','Taller Neuquén','Distribuidora Industrial Pampeana S.A.','Insumos de mecanizado','ZINS01','8200','USD','8200','FE-032']],
+   {k:'factor',l:'Factor de emisión (opcional)',syn:['factor','factor_emision','ef']}],
+  sample:[['2026-08','4500021777','10','Planta Vicente López','Acería del Centro S.A.','Acero aleado','ZACE01','18500','kg','25530',''],
+          ['2026-08','4500021780','10','Taller Neuquén','Distribuidora Industrial Pampeana S.A.','Insumos de mecanizado','ZINS01','8200','USD','8200','']],
   apply(row){ if(!validPeriod(row.periodo)) return {err:'Período inválido (usá AAAA-MM).'};
     const site=findSiteLoose(row.planta); if(!site) return {err:'Planta no reconocida: «'+row.planta+'».'};
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
@@ -4511,7 +4529,7 @@ const DATA_TYPES = {
   fields:[{k:'periodo',l:'Período (AAAA-MM)',req:1,syn:['periodo','fecha','mes']},{k:'planta',l:'Planta',req:1,syn:['planta','site']},
    {k:'residuo',l:'Tipo de residuo',req:1,syn:['residuo','tipo','corriente']},{k:'cantidad',l:'Cantidad (kg)',req:1,syn:['cantidad','kg','peso']},
    {k:'factor',l:'Factor (opcional)',syn:['factor','factor_emision']},{k:'documento',l:'Manifiesto (opcional)',syn:['manifiesto','documento','comprobante']}],
-  sample:[['2026-08','Planta Vicente López','Chatarra metálica','6800','FE-051','Manifiesto 48211'],['2026-08','Planta Vicente López','Residuo asimilable','2100','FE-052','Manifiesto 48212']],
+  sample:[['2026-08','Planta Vicente López','Chatarra metálica','6800','','Manifiesto 48211'],['2026-08','Planta Vicente López','Residuo asimilable','2100','','Manifiesto 48212']],
   apply(row){ if(!validPeriod(row.periodo)) return {err:'Período inválido (usá AAAA-MM).'};
     const site=findSiteLoose(row.planta); if(!site) return {err:'Planta no reconocida: «'+row.planta+'».'};
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
@@ -4527,7 +4545,7 @@ const DATA_TYPES = {
    {k:'origen',l:'Origen (opcional)',syn:['origen','desde','from']},{k:'destino',l:'Destino (opcional)',syn:['destino','hasta','to']},
    {k:'lat_origen',l:'Lat. origen',syn:['lat_origen','latitud_origen']},{k:'lon_origen',l:'Lon. origen',syn:['lon_origen','longitud_origen']},
    {k:'lat_destino',l:'Lat. destino',syn:['lat_destino','latitud_destino']},{k:'lon_destino',l:'Lon. destino',syn:['lon_destino','longitud_destino']}],
-  sample:[['2026-08','Planta Vicente López','Vuelo Buenos Aires → Neuquén','1150','FE-060','Reserva K449201','Buenos Aires','Neuquén','','','',''],['2026-08','Planta Vicente López','Vuelo a planta de cliente','7800','FE-060','Reserva K449377','Buenos Aires','Houston','-34.60','-58.38','29.76','-95.37'],['2026-08','Planta Vicente López','Hotelería','24','FE-062','Consolidado 08-2026','','','','','','']],
+  sample:[['2026-08','Planta Vicente López','Vuelo Buenos Aires → Neuquén','1150','','Reserva K449201','Buenos Aires','Neuquén','','','',''],['2026-08','Planta Vicente López','Vuelo a planta de cliente','7800','','Reserva K449377','Buenos Aires','Houston','-34.60','-58.38','29.76','-95.37'],['2026-08','Planta Vicente López','Hotelería','24','','Consolidado 08-2026','','','','','','']],
   apply(row){ if(!validPeriod(row.periodo)) return {err:'Período inválido (usá AAAA-MM).'};
     const site=findSiteLoose(row.planta);
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
@@ -4583,7 +4601,10 @@ function parseSpreadsheetFile(file,cb){
   } else if(typeof XLSX!=='undefined'){
     const rd=new FileReader();
     rd.onload=()=>{ try{ const wb=XLSX.read(rd.result,{type:'array'}); const ws=wb.Sheets[wb.SheetNames[0]];
-        const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''}); cb(rows.map(r=>r.map(c=>String(c))).filter(r=>r.some(c=>c.trim()!==''))); }
+        /* las celdas de fecha llegan como número de serie: el texto formateado sería m/d/aa de EE. UU. */
+        const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''}), raw=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''});
+        const dated=rows.map((r,i)=>r.map((c,j)=>{ const v=(raw[i]||[])[j]; return typeof v==='number'&&/[a-z]|\d+\/\d+\/\d+/i.test(String(c))&&!/^[\d.,\s%$-]+$/.test(String(c))?String(v):String(c); }));
+        cb(dated.filter(r=>r.some(c=>c.trim()!==''))); }
       catch(e){ toast('No se pudo leer el archivo XLSX. Probá exportarlo como CSV.','⚠'); } };
     rd.onerror=()=>toast('No se pudo leer el archivo.','⚠'); rd.readAsArrayBuffer(file);
   } else {
@@ -4643,6 +4664,8 @@ function dcWizToStep(n){
     const results=S.dc.wiz.rows.map(r=>{ const row={}; mp.forEach((k,i)=>{ if(k) row[k]=(r[i]==null?'':String(r[i])).trim(); });
       const missing=t.fields.filter(f=>f.req&&!row[f.k]);
       if(missing.length) return {row,status:'err',msg:'Faltan campos obligatorios: '+missing.map(f=>f.l).join(', ')+'.'};
+      if(row.periodo){ const d=toISODate(row.periodo); if(!d) return {row,status:'err',msg:'Período no reconocido: «'+row.periodo+'». Usá AAAA-MM, por ejemplo 2026-08.'}; row.periodo=d.slice(0,7); }
+      if(row.fecha){ const d=toISODate(row.fecha); if(!d) return {row,status:'err',msg:'Fecha no reconocida: «'+row.fecha+'». Usá AAAA-MM-DD, por ejemplo 2026-08-15.'}; row.fecha=d; }
       return {row,status:'pending'};
     });
     S.dc.wiz.valid=results; S.dc.wiz.step=4; render(); return;
@@ -4757,6 +4780,7 @@ function dcWizardView(){
       <div class="empty-ico" style="width:52px;height:52px;border-radius:14px;background:var(--ok-soft);color:var(--ok);display:flex;align-items:center;justify-content:center;margin:0 auto 14px">${ico('check',2)}</div>
       <div style="font-size:20px;font-weight:600">Importación completa</div>
       <p class="dim" style="max-width:52ch;margin:8px auto 22px"><b>${nf(im.ok)}</b> registros importados${im.err?', <b>'+nf(im.err)+'</b> rechazados por errores':''}. Los datos ya están sumados al inventario del período correspondiente — no se perdió ningún dato de demostración.</p>
+      ${im.err?`<div class="note" style="max-width:70ch;margin:0 auto 14px;text-align:left;border-color:var(--bad-line);background:var(--bad-soft)"><b>Filas rechazadas</b>${w.valid.filter(i=>i.status==='err').slice(0,8).map(i=>`<div class="tiny" style="margin-top:4px">${esc(Object.values(i.row).slice(0,3).join(' · '))} — <b>${esc(i.msg||'')}</b></div>`).join('')}${im.err>8?`<div class="tiny dim" style="margin-top:4px">…y ${nf(im.err-8)} más.</div>`:''}<div style="margin-top:8px"><button class="btn sm" onclick="dcWizDownloadErrors()">Descargar filas rechazadas</button></div></div>`:''}
       ${im.auto?`<div class="note" style="max-width:60ch;margin:0 auto 18px;text-align:left"><b>${nf(im.auto)}</b> registros recibieron el factor de la biblioteca más parecido a su descripción${im.ties?`, <b style="color:var(--bad)">${nf(im.ties)} con empate</b>`:''}. Quedan pendientes de aprobación.</div>`:''}
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
         ${im.auto?`<button class="btn primary" onclick="go('asignacion')">Revisar y aprobar factores</button>`:''}
