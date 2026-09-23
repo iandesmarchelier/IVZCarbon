@@ -3892,15 +3892,29 @@ function fmOptions(r){
   return cands.map(c=>`<option value="${esc(c.factor)}" ${c.factor===r.factor?'selected':''}>${c.pct}% · ${esc(c.factor)} — ${esc(FBI[c.factor].act)}</option>`).join('')
     +(others.length?`<optgroup label="Otros factores con la misma unidad">${others.map(x=>`<option value="${esc(x.id)}" ${x.id===r.factor?'selected':''}>${esc(x.id)} — ${esc(x.act)}</option>`).join('')}</optgroup>`:'');
 }
-V.asignacion=f=>{
-  const base=query(f).filter(r=>r.fm), x=S.fmf;
-  const pend=fmPending(base), ties=pend.filter(r=>fmTied(r).length);
-  let rs=base;
+/* asignaciones del perímetro que pasan los filtros de la vista, de menor a mayor similitud */
+function fmFiltered(f){
+  const x=S.fmf; let rs=query(f).filter(r=>r.fm);
   if(x.state==='pend') rs=rs.filter(r=>!r.fm.ok); else if(x.state==='ok') rs=rs.filter(r=>r.fm.ok); else if(x.state==='tie') rs=rs.filter(r=>fmTied(r).length);
   if(x.type!=='all') rs=rs.filter(r=>r.type===x.type);
   if(x.band!=='all') rs=rs.filter(r=>fmTone(r.fm.pct)===x.band);
   if(x.q){ const q=normTxt(x.q); rs=rs.filter(r=>normTxt([r.fm.text,r.source,r.factor,(FBI[r.factor]||{}).act,r.po&&r.po.oc,r.origin.doc].join(' ')).includes(q)); }
-  rs=rs.slice().sort((a,b)=>(a.fm.pct==null?-1:a.fm.pct)-(b.fm.pct==null?-1:b.fm.pct)||b.kg-a.kg);
+  return rs.sort((a,b)=>(a.fm.pct==null?-1:a.fm.pct)-(b.fm.pct==null?-1:b.fm.pct)||b.kg-a.kg);
+}
+/* aprueba de una vez todas las pendientes que pasan los filtros; los empates esperan que alguien elija el factor */
+function fmApproveAll(){
+  const rs=fmFiltered(S.f).filter(r=>!r.fm.ok), tied=rs.filter(r=>fmTied(r).length).length, todo=rs.filter(r=>!fmTied(r).length);
+  if(!todo.length){ toast(tied?'Solo quedan asignaciones con empate: elegí el factor de cada una.':'No hay asignaciones pendientes con estos filtros.','—'); return; }
+  const low=todo.filter(r=>fmTone(r.fm.pct)==='err').length;
+  if(!confirm('¿Aprobar '+nf(todo.length)+' asignaciones de factor?'+(low?'\n\n'+nf(low)+' tienen menos de '+FM_MID+'% de similitud.':'')+(tied?'\n\n'+nf(tied)+' con empate no se aprueban: hay que elegir el factor de cada una.':''))) return;
+  let n=0; todo.forEach(r=>{ if(fmApprove(r)) n++; });
+  S.fmSel.clear();
+  toast(nf(n)+' asignaciones aprobadas.'+(tied?' '+nf(tied)+' con empate quedaron pendientes.':''),tied?'⚠':'✓'); render();
+}
+V.asignacion=f=>{
+  const base=query(f).filter(r=>r.fm), x=S.fmf;
+  const pend=fmPending(base), ties=pend.filter(r=>fmTied(r).length);
+  const rs=fmFiltered(f), approvable=rs.filter(r=>!r.fm.ok&&!fmTied(r).length).length;
   const shown=rs.slice(0,150), selectable=shown.filter(r=>!r.fm.ok&&!fmTied(r).length).map(r=>r.rid);
   const band=t=>pend.filter(r=>fmTone(r.fm.pct)===t).length;
   const avg=pend.length?sum(pend,r=>r.fm.pct||0)/pend.length:null;
@@ -3908,7 +3922,8 @@ V.asignacion=f=>{
   const fld=(lab,key,opts)=>`<div class="fld"><label>${lab}</label><select onchange="fmSetF('${key}',this.value)">${opts.map(([v,l])=>`<option value="${v}" ${x[key]===v?'selected':''}>${esc(l)}</option>`).join('')}</select></div>`;
   return head('Asignación de factores','El sistema elige el factor de la biblioteca más parecido a cada dato de actividad (similitud de texto con pg_trgm de PostgreSQL). Cada asignación se aprueba a mano; las más lejanas aparecen primero.',
     `<button class="btn" ${S.fmBusy?'disabled':''} onclick="fmAnalyzeExisting()">${S.fmBusy?'Buscando factores…':'Analizar registros existentes'}</button>
-     <button class="btn primary" ${S.fmSel.size?'':'disabled'} onclick="fmApproveSelected()">Aprobar seleccionados (${nf(S.fmSel.size)})</button>`)
+     <button class="btn" ${S.fmSel.size?'':'disabled'} onclick="fmApproveSelected()">Aprobar seleccionados (${nf(S.fmSel.size)})</button>
+     <button class="btn primary" ${approvable?'':'disabled'} onclick="fmApproveAll()" title="Aprueba todas las pendientes que pasan los filtros, no solo las visibles. Los empates quedan pendientes.">Aprobar todo (${nf(approvable)})</button>`)
   +`<div class="grid g4">
       ${kpi('Pendientes de aprobación',nf(pend.length),'',pend.length?'<span class="pill warn">Acción pendiente</span>':'<span class="pill ok">Al día</span>',{icon:'check',onclick:"fmSetF('state','pend')"})}
       ${kpi('Empates',nf(ties.length),'',ties.length?'<span class="pill err">Elegir el factor a mano</span>':'<span class="dim tiny">ningún factor con la misma similitud</span>',{icon:'info',onclick:"fmSetF('state','tie')"})}
