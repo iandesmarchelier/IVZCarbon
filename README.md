@@ -50,6 +50,7 @@ Se conserva `iniciar-local.ps1` como alternativa explícita SQLite de pruebas. S
 - Motor Python recalcula las emisiones a partir de cantidades y factores; no confía en los totales enviados por JavaScript. Incluye alcances 1/2/3, categorías, CO2 biogénico separado, location-based e incertidumbre equivalente al prototipo.
 - Auditoría de accesos y guardados; exportación JSON y CSV mediante API. `/api/summary` entrega el cálculo consolidado del servidor.
 - Se conserva la navegación y los importadores de la V3.5. El navegador mantiene su motor para interacción inmediata; Python valida y recalcula al guardar.
+- Movilidad (reemplaza al mapa de movimientos de América): globo 3D del planeta con los traslados de insumos por tramo y los viajes de negocio. Cada trayecto va de verde (menor emisión) a rojo (mayor) y los de mayor emisión laten; el mapa de calor muestra las ubicaciones con más emisiones de movilidad (cada trayecto reparte su emisión entre origen y destino) o, a elección, el inventario total por sitio. Los viajes se ubican con `route` (origen y destino de la planilla de viajes, con coordenadas opcionales) o leyendo el concepto («Vuelo — Buenos Aires → Houston»). El globo (`static/globe.js`, `static/world.js` con contornos Natural Earth de dominio público) es un canvas propio, sin teselas ni servicios de mapas; Leaflet ya no se usa.
 
 ## Modelo de datos
 
