@@ -25,7 +25,7 @@
   --line:#E2E7E3; --line-2:#CFD7D1;
   --accent:#3F704D; --accent-2:#4B7F55; --accent-soft:#E7F1E8; --accent-line:#C3DBC7;
   --teal:#0F6A6B; --teal-soft:#E1F0F0; --teal-line:#BCDCDC;
-  --sage:#7FAE8B; --sage-soft:#EAF3EC; --sage-line:#CDE3D3; --sage-ink:#3E6B4C;
+  --sage:#4B7F55; --sage-soft:#EAF3EC; --sage-line:#CDE3D3; --sage-ink:#3E6B4C;
   --c1:#A6453A; --c1-soft:#FAEBE8; --c1-line:#EFC9C2; --c1-ink:#9E3428;
   --c2:#C08A2A; --c2-soft:#FBF1DF; --c2-line:#EBD7AE; --c2-ink:#9C6508;
   --c3:#3F704D;
@@ -1587,8 +1587,8 @@ const nfv=(n,max=2)=>new Intl.NumberFormat('es-AR',{maximumFractionDigits:max}).
 /* Paleta de gráficos — misma identidad cromática que IVZ Sustainability Hub.
    s1/s2/s3 son los tres Alcances GHG y usan la escala monocromática verde
    (verde bosque · teal · verde salvia) en vez de semáforo rojo/ámbar/verde. */
-const C = {s1:'#3F704D',s2:'#0F6A6B',s3:'#7FAE8B',
- pal:['#3F704D','#0F6A6B','#7FAE8B','#C08A2A','#5C7C9A','#A6453A','#3E9394','#9BAF7E','#8A6FA3','#C7A35B','#6E8477','#B07C6B'],
+const C = {s1:'#2E573C',s2:'#0F6A6B',s3:'#4B7F55',
+ pal:['#2E573C','#0F6A6B','#4B7F55','#C08A2A','#5C7C9A','#A6453A','#3E9394','#6B8A4A','#8A6FA3','#C7A35B','#6E8477','#B07C6B'],
  grey:'#CFD7D1'};
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const qesc=s=>String(s).replace(/'/g,'&#39;'); // para embeber HTML dentro de data-tip='...'
@@ -1897,8 +1897,8 @@ V.dash=f=>{
                  {label:'Alcance 3 — otras indirectas',value:sc[3],color:C.s3,key:'scope:3'}];
   const bySrc=groupSum(rs,srcOf), srcKeys=Object.keys(bySrc).sort((a,b)=>bySrc[b]-bySrc[a]);
   const nSrc={}; rs.forEach(r=>{const k=srcOf(r);nSrc[k]=(nSrc[k]||0)+1});
-  const s1items=CATKEYS[1].map((k,i)=>({label:catLabel(k),value:ck[k]||0,color:['#3F704D','#5C7C9A','#9BAF7E','#0F6A6B'][i],key:k}));
-  const s2items=CATKEYS[2].map((k,i)=>({label:catLabel(k),value:ck[k]||0,color:['#0F6A6B','#3E9394','#7FAE8B','#5C7C9A'][i],key:k}));
+  const s1items=CATKEYS[1].map((k,i)=>({label:catLabel(k),value:ck[k]||0,color:['#2E573C','#5C7C9A','#6B8A4A','#0F6A6B'][i],key:k}));
+  const s2items=CATKEYS[2].map((k,i)=>({label:catLabel(k),value:ck[k]||0,color:['#0F6A6B','#3E9394','#4B7F55','#5C7C9A'][i],key:k}));
   return head('Panel ejecutivo', `Huella de carbono corporativa según GHG Protocol e ISO 14064-1. ${perimLabel(f)}.`,
    `<button class="btn" onclick="go('reportes')">Ver reportes</button><button class="btn primary" onclick="exportInventoryXLSX(S.f)">${ico('download')} Exportar inventario (XLSX)</button>`)
   +`<div class="grid g4" data-tour="dash-kpis">
@@ -1972,7 +1972,7 @@ const EMPTY_HINT={'1.proc':'Se alimentaría con emisiones no energéticas inhere
   '2.vapor':'Se alimentaría con facturas de vapor comprado a terceros. La categoría queda disponible con su factor configurado (FE-013).',
   '2.calor':'Se alimentaría con facturas de calefacción adquirida (redes de calor). Sin registros en la organización de ejemplo.',
   '2.frio':'Se alimentaría con facturas de frío o agua helada comprada a terceros. Sin registros en la organización de ejemplo.'};
-function catColor(k,i){ const s=k[0]; return s==='1'?['#3F704D','#5C7C9A','#9BAF7E','#0F6A6B'][i%4]:s==='2'?['#0F6A6B','#3E9394','#7FAE8B','#5C7C9A'][i%4]:C.pal[i%12]; }
+function catColor(k,i){ const s=k[0]; return s==='1'?['#2E573C','#5C7C9A','#6B8A4A','#0F6A6B'][i%4]:s==='2'?['#0F6A6B','#3E9394','#4B7F55','#5C7C9A'][i%4]:C.pal[i%12]; }
 
 V.corporativo=(f,arg)=>{
   if(arg!=null){ const a=String(arg).split('|'); S.tab=a[0]; S.invSel=a[1]||null; }
