@@ -124,6 +124,8 @@
   }
   async function closeYear(year,button){
     const rows=REC.filter(r=>yearOf(r)===year), pending=rows.filter(r=>r.cls&&r.cls.state!=='auto').length;
+    const unapproved=rows.filter(r=>r.fm&&!r.fm.ok).length;
+    if(unapproved){alert(year+' tiene '+unapproved.toLocaleString('es')+' factores asignados automáticamente sin aprobar. Aprobalos en «Asignación de factores» antes de cerrar el año.');return;}
     const tonnes=(rows.reduce((a,r)=>a+(r.kg||0),0)/1000).toLocaleString('es',{maximumFractionDigits:1});
     if(!confirm('¿Cerrar '+year+'? '+rows.length.toLocaleString('es')+' registros, '+tonnes+' tCO₂e.'+
       (pending?'\n\nAtención: '+pending+' registros de '+year+' todavía están pendientes de revisar.':'')+
@@ -185,6 +187,10 @@
     return r.json();
   }
   window.api=api;
+  // Automatic factor assignment (index.html) saves first so the server matches against the current catalogue.
+  window.carbonSave=()=>save();
+  window.carbonUser=()=>username;
+  window.carbonClosedYears=()=>closedYears;
   function download(value,name){const a=document.createElement('a');const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
   let pendingSave=null;
   async function save(){

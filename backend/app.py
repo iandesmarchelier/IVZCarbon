@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .invoice_parser import parse_document
-from . import inventory
+from . import inventory, matching
 from .security import hash_password, verify_password, token_hash
 from .storage import db, initialize, decode, database_url, event
 
@@ -26,6 +26,8 @@ DUMMY = hash_password('not-a-real-account')
 @asynccontextmanager
 async def lifespan(app):
     initialize()
+    with db() as s:
+        matching.enable(s)
     bootstrap_account()
     yield
 
@@ -249,6 +251,31 @@ def reopen_year(year: int, body: ReopenYear, request: Request):
     if not user.get('impersonated_by'):
         raise HTTPException(403, 'Solo un administrador puede reabrir un año cerrado.')
     return inventory.reopen_year(user['id'], year, acting_as(user), body.reason.strip())
+
+
+class MatchItem(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+    scope: Literal[1, 2, 3] | None = None
+    cat: int | None = Field(default=None, ge=1, le=15)
+    sub: str | None = Field(default=None, max_length=20)
+    unit: str | None = Field(default=None, max_length=40)
+    supplier: str | None = Field(default=None, max_length=200)
+
+
+class MatchRequest(BaseModel):
+    items: list[MatchItem] = Field(min_length=1, max_length=5000)
+
+
+@app.post('/api/factors/match')
+def match_factors(body: MatchRequest, request: Request):
+    """Library factor most similar to each description (pg_trgm), for the screen or an ERP integration."""
+    return matching.match(account_flexible(request)['id'], [item.model_dump() for item in body.items])
+
+
+@app.get('/api/factors/terms')
+def library_terms(request: Request):
+    account(request)
+    return matching.LIBRARY_TERMS
 
 
 class TokenCreate(BaseModel):
@@ -485,7 +512,8 @@ def admin_return(request: Request, response: Response):
 def health():
     with db() as s:
         s.execute('SELECT 1')
-    return {'status': 'ok', 'database': 'postgresql' if database_url() else 'sqlite-local'}
+        similarity = matching.engine(s)
+    return {'status': 'ok', 'database': 'postgresql' if database_url() else 'sqlite-local', 'similarity': similarity}
 
 
 @app.get('/')

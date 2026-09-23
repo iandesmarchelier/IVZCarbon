@@ -10,7 +10,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from .metrics import normalize, compute
+from .metrics import normalize, compute, pending_match
 from .storage import db, decode, event
 
 ROWS = {'REC': 'rid', 'MOV': 'id'}
@@ -304,6 +304,10 @@ def close_year(user, year, by):
         if year in _closed_years(s, user):
             raise HTTPException(409, f'El año {year} ya está cerrado.')
         state = dict(body, **{kind: [item for _, item in _rows(s, user, kind)] for kind in ROWS})
+        pending = sum(1 for r in state['REC'] if _year(r) == year and pending_match(r))
+        if pending:
+            raise HTTPException(409, f'{year} tiene {pending} factores asignados automáticamente sin aprobar. '
+                                     'Aprobalos en «Asignación de factores» antes de cerrar el año.')
         results = compute(normalize(state), year)
         s.execute('INSERT INTO carbon_closures (account,year,closed_at,closed_by,results,factors,sites) VALUES (?,?,?,?,?,?,?)',
                   (user, year, now, by, s.json(results), s.json(body['FACTORS']), s.json(body['SITES'])))

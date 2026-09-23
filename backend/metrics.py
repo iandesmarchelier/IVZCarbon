@@ -48,6 +48,9 @@ def normalize(raw):
         for k in ('bio', 'unc'):
             if f.get(k) is not None:
                 number(f[k], k)
+        alias = f.get('alias', [])
+        if not isinstance(alias, list) or len(alias) > 500 or any(not isinstance(a, str) or len(a) > 500 for a in alias):
+            raise ValueError(f"{f['id']}: términos de búsqueda inválidos.")
     for p in state['PERIODS']:
         if not isinstance(p, str) or not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', p):
             raise ValueError('Período inválido: usá AAAA-MM.')
@@ -70,6 +73,8 @@ def normalize(raw):
             r['sub'] = f.get('sub') or ('elec' if f['scope'] == 2 else 'stat')
         if r.get('pair') and r['pair'] not in records:
             raise ValueError(f"{r['rid']}: registro vinculado inexistente.")
+        if r.get('fm') is not None:
+            check_match(r)
     settings = state.setdefault('settings', {})
     if not isinstance(settings, dict) or not isinstance(settings.get('uqOverrides', {}), dict):
         raise ValueError('Configuración de incertidumbre inválida.')
@@ -86,6 +91,21 @@ def normalize(raw):
         if not isinstance(state.get(key), list) or any(not isinstance(x, str) for x in state[key]):
             raise ValueError('Referencias demo inválidas.')
     return state
+
+
+def check_match(r):
+    """Automatic factor assignment kept on a record: what was searched, how similar, and its approval."""
+    fm = r['fm']
+    if not isinstance(fm, dict) or not isinstance(fm.get('ok', False), bool) or not isinstance(fm.get('tie', False), bool):
+        raise ValueError(f"{r['rid']}: asignación automática de factor inválida.")
+    if fm.get('pct') is not None:
+        number(fm['pct'], 'Similitud', 100)
+    if not isinstance(fm.get('cands', []), list) or len(fm.get('cands', [])) > 30:
+        raise ValueError(f"{r['rid']}: alternativas de factor inválidas.")
+
+
+def pending_match(r):
+    return isinstance(r.get('fm'), dict) and not r['fm'].get('ok')
 
 
 def activity_uncertainty(r):

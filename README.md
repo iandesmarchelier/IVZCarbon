@@ -51,6 +51,7 @@ Se conserva `iniciar-local.ps1` como alternativa explícita SQLite de pruebas. S
 - Auditoría de accesos y guardados; exportación JSON y CSV mediante API. `/api/summary` entrega el cálculo consolidado del servidor.
 - Se conserva la navegación y los importadores de la V3.5. El navegador mantiene su motor para interacción inmediata; Python valida y recalcula al guardar.
 - Movilidad (reemplaza al mapa de movimientos de América): globo 3D del planeta con los traslados de insumos por tramo y los viajes de negocio. Cada trayecto va de verde (menor emisión) a rojo (mayor) y los de mayor emisión laten; el mapa de calor muestra las ubicaciones con más emisiones de movilidad (cada trayecto reparte su emisión entre origen y destino) o, a elección, el inventario total por sitio. Los viajes se ubican con `route` (origen y destino de la planilla de viajes, con coordenadas opcionales) o leyendo el concepto («Vuelo — Buenos Aires → Houston»). El globo (`static/globe.js`, `static/world.js` con contornos Natural Earth de dominio público) es un canvas propio, sin teselas ni servicios de mapas; Leaflet ya no se usa.
+- Asignación automática de factores (`backend/matching.py`): cada dato que entra sin factor (posición de OC o baja de stock, viaje, residuo, traslado, transporte en t·km, consumo de energía o combustible, otra actividad; por Excel o carga manual) recibe el factor de la biblioteca más parecido a su descripción. La similitud la calcula PostgreSQL con `pg_trgm` entre los factores del mismo alcance, categoría y unidad (un factor declarado por un proveedor solo compite en las compras de ese proveedor): puntaje = mejor término del factor de (`similarity` + mayor `strict_word_similarity` en ambos sentidos) / 2. Cada factor se busca por su título, los términos de la biblioteca IVZ (`LIBRARY_TERMS`: «vuelo» → Avión, «hotelería» → Hotel…) y sus términos propios (`alias`, editables en Factores de emisión). El registro guarda `fm` (texto buscado, porcentaje, candidatos, empate, aprobación). Toda asignación automática queda pendiente hasta que una persona la aprueba en «Asignación de factores», que las ordena de menor a mayor similitud; el porcentaje aparece al lado del factor en las tablas de registros, OC y transacciones. Dos factores con el mismo porcentaje son un empate: se advierte y no se aprueba en lote. Al aprobar, el texto pasa a ser término del factor y la próxima vez coincide al 100%. Un año con asignaciones sin aprobar no se puede cerrar. «Analizar registros existentes» aplica lo mismo a compras, viajes, residuos y traslados ya cargados (años abiertos). Si la base no tiene `pg_trgm`, el servidor calcula lo mismo en Python con resultados idénticos; `/health` informa el motor en `similarity`. Las facturas de energía, los manifiestos de residuos y los movimientos por tramo conservan su factor determinado por sitio, tratamiento o modo.
 
 ## Modelo de datos
 
@@ -72,6 +73,7 @@ Documentación interactiva: `/docs`. Las operaciones de escritura requieren `X-I
 | `GET /api/closures`, `POST /api/closures` `{year}`, `POST /api/closures/{year}/reopen` `{reason}` | Cierre de años: cerrar (cliente o administrador), reabrir (solo administrador entrando como el cliente) |
 | `GET /api/records?year=2025&scope=1&limit=100&offset=0` | Registros paginados |
 | `GET /api/export`, `GET /api/inventory.csv` | Respaldo e inventario |
+| `POST /api/factors/match` `{items:[{text, scope?, cat?, unit?, supplier?}]}`, `GET /api/factors/terms` | Factor de la biblioteca más parecido a cada descripción (hasta 5.000 por pedido; acepta también token de integración) y términos de búsqueda de la biblioteca |
 | `GET /api/audit`, `GET /health` | Auditoría y salud de la base |
 
 Para restaurar un respaldo mediante API: obtener la revisión actual de `/api/state`, enviar esa revisión junto con `state` del respaldo mediante `PUT /api/state`. Descargar antes la versión actual. Un conflicto 409 requiere revisar qué versión conservar; no reintentar automáticamente con la revisión nueva. Un 423 indica que el respaldo cambia registros de un año cerrado.
@@ -82,6 +84,8 @@ Desde la carpeta padre del proyecto Carbon:
 
 ```powershell
 python -m unittest discover -s carbon/tests -v
+# Opcional: compara el motor Python con pg_trgm en una base PostgreSQL de prueba
+$env:CARBON_TEST_POSTGRES_URL = 'postgresql://usuario:password@127.0.0.1:55432/base_de_prueba'
 node --check carbon/static/bridge.js
 ```
 

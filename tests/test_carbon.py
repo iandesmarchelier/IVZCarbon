@@ -17,6 +17,8 @@ from backend.manage import create_user
 from backend.metrics import compute, normalize
 from backend.storage import db, database_url, decode
 from backend.security import hash_password, verify_password
+from backend import matching
+from backend.storage import Session
 
 SEED = json.loads((ROOT/'seed.json').read_text(encoding='utf8'))
 
@@ -43,6 +45,75 @@ class MetricsTests(unittest.TestCase):
         for key, value in [('qty',-1),('qty',float('nan')),('site','missing'),('factor','missing'),('unit','wrong')]:
             s=copy.deepcopy(SEED);s['REC'][0][key]=value
             with self.subTest(key=key,value=value), self.assertRaises(ValueError):normalize(s)
+
+
+class MatchingTests(unittest.TestCase):
+    """Automatic factor assignment by text similarity (pg_trgm, or the same arithmetic in Python)."""
+    factors = SEED['FACTORS']
+
+    def rank(self, *items):
+        return matching.rank(Session(None, False), self.factors, list(items))
+
+    def test_picks_the_most_similar_factor_among_those_that_fit(self):
+        cases = [({'text': 'Acero inoxidable — ASTM A276', 'scope': 3, 'cat': 1, 'unit': 'kg'}, 'FE-031'),
+                 ({'text': 'Honorarios consultora ambiental', 'scope': 3, 'cat': 1, 'unit': 'usd'}, 'FE-033'),
+                 ({'text': 'Vuelo Buenos Aires → Neuquén', 'scope': 3, 'cat': 6}, 'FE-060'),
+                 ({'text': 'Hotelería', 'scope': 3, 'cat': 6}, 'FE-062'),
+                 ({'text': 'home office Uruguay', 'scope': 3, 'cat': 7}, 'FE-073'),
+                 ({'text': 'Electricidad de red Uruguay', 'scope': 2, 'unit': 'kWh'}, 'FE-011'),
+                 ({'text': 'Transporte marítimo', 'scope': 3, 'cat': 4, 'unit': 't·km'}, 'FE-041')]
+        for (item, expected), result in zip(cases, self.rank(*[c[0] for c in cases])):
+            with self.subTest(item['text']):
+                self.assertEqual(result['factor'], expected)
+                self.assertTrue(0 < result['pct'] <= 100)
+                self.assertTrue(all(a['pct'] <= result['pct'] for a in result['alts']))
+        self.assertEqual(self.rank({'text': 'Hotelería', 'scope': 3, 'cat': 6})[0]['pct'], 100)
+
+    def test_unit_scope_and_supplier_limit_the_candidates(self):
+        paint = self.rank({'text': 'Pintura epoxi', 'scope': 3, 'cat': 1, 'unit': 'L'})[0]
+        self.assertIsNone(paint['factor'])
+        self.assertIn('unidad L', paint['error'])
+        generic = self.rank({'text': 'Acero aleado', 'scope': 3, 'cat': 1, 'unit': 'kg'})[0]
+        self.assertNotIn('FE-034', [generic['factor']] + [a['factor'] for a in generic['alts']])
+        own = self.rank({'text': 'Acero aleado', 'scope': 3, 'cat': 1, 'unit': 'kg', 'supplier': 'PRV-1004'})[0]
+        self.assertIn('FE-034', [a['factor'] for a in own['alts']])
+
+    def test_equal_similarity_is_a_tie(self):
+        twins = [dict(f, id=f['id'] + '-B', alias=matching.LIBRARY_TERMS[f['id']]) for f in self.factors if f['id'] == 'FE-062'] + self.factors
+        result = matching.rank(Session(None, False), twins, [{'text': 'Hotel', 'scope': 3, 'cat': 6}])[0]
+        self.assertTrue(result['tie'])
+        self.assertIn(result['factor'], ('FE-062', 'FE-062-B'))
+        self.assertEqual(len(result['tiedWith']), 1)
+        self.assertFalse(self.rank({'text': 'Hotel', 'scope': 3, 'cat': 6})[0]['tie'])
+
+    def test_learnt_terms_match_exactly(self):
+        learnt = [dict(f, alias=['Varilla roscada M12']) if f['id'] == 'FE-030' else f for f in self.factors]
+        result = matching.rank(Session(None, False), learnt, [{'text': 'varilla roscada m12', 'scope': 3, 'cat': 1, 'unit': 'kg'}])[0]
+        self.assertEqual((result['factor'], result['pct']), ('FE-030', 100))
+
+    def test_rounding_is_the_same_for_both_engines(self):
+        self.assertEqual(matching.percent(0.725), 73)
+        self.assertEqual(matching.percent(0.72500002), 73)
+        self.assertEqual(matching.percent(0.72494), 72)
+
+    @unittest.skipUnless(os.getenv('CARBON_TEST_POSTGRES_URL'), 'CARBON_TEST_POSTGRES_URL no configurada')
+    def test_python_gives_what_pg_trgm_gives(self):
+        import psycopg
+        from psycopg.rows import dict_row
+        texts = sorted({r['source'] for r in SEED['REC']})[:150] + [t for ts in matching.LIBRARY_TERMS.values() for t in ts]
+        items = [{'text': t} for t in texts] + [{'text': t, 'scope': 3, 'cat': c} for t, c in zip(texts, [1, 4, 5, 6, 7] * 100)]
+        with psycopg.connect(os.environ['CARBON_TEST_POSTGRES_URL'], row_factory=dict_row) as conn:
+            s = Session(conn, True)
+            matching.enable(s)
+            self.assertEqual(matching.engine(s), 'pg_trgm')
+            self.assertEqual(matching.rank(s, self.factors, items), self.rank(*items))
+            for a in texts[:40]:
+                for b in texts[-40:]:
+                    ka, kb = matching.text_key(a), matching.text_key(b)
+                    pg = s.execute('SELECT similarity(%s,%s) AS s, strict_word_similarity(%s,%s) AS w', (ka, kb, ka, kb)).fetchone()
+                    self.assertAlmostEqual(pg['s'], matching.similarity(ka, kb), places=6)
+                    self.assertAlmostEqual(pg['w'], matching.strict_word_similarity(ka, kb), places=6)
+            conn.rollback()
 
 
 class ApiTests(unittest.TestCase):
@@ -318,6 +389,39 @@ class ApiTests(unittest.TestCase):
         reopen=next(e for e in audit if e['action']=='reopen_year')['details']
         self.assertEqual((reopen['reason'],reopen['by'],reopen['closedResults']['tCO2e']),('Factor de red corregido','Administrador de Invenzis',before['tCO2e']))
         self.assertEqual(attempt(edit).status_code,200)
+
+    def test_factor_matching_endpoint_and_approval(self):
+        self.assertEqual(self.client.post('/api/factors/match',headers=self.h,json={'items':[{'text':'Vuelo'}]}).status_code,401)
+        self.login()
+        self.assertEqual(self.client.post('/api/factors/match',headers=self.h,json={'items':[{'text':'Vuelo'}]}).status_code,404)
+        current=self.initialize()
+        self.assertEqual(self.client.post('/api/factors/match',headers=self.h,json={'items':[]}).status_code,422)
+        r=self.client.post('/api/factors/match',headers=self.h,json={'items':[{'text':'Vuelo a Houston','scope':3,'cat':6},{'text':'Pintura','scope':3,'cat':1,'unit':'L'}]})
+        self.assertEqual(r.status_code,200,r.text)
+        body=r.json();self.assertEqual(body['engine'],'python')
+        self.assertEqual(body['results'][0]['factor'],'FE-060');self.assertIsNone(body['results'][1]['factor'])
+        self.assertEqual(self.client.get('/health').json()['similarity'],'python')
+        self.assertIn('FE-060',self.client.get('/api/factors/terms').json())
+        # Terms the organisation adds (or learns from approvals) are used for the next match.
+        state=copy.deepcopy(current['state'])
+        next(f for f in state['FACTORS'] if f['id']=='FE-031')['alias']=['Bulón inox M10']
+        rec=next(r for r in state['REC'] if r['type']=='purchase' and r['p'].startswith('2025'))
+        rec['fm']={'text':'Bulón inox M10','auto':rec['factor'],'pct':41,'tie':False,'cands':[{'factor':rec['factor'],'pct':41}],'ok':False,'engine':'python'}
+        saved=self.client.post('/api/state/changes',headers=self.h,json=self.diff(current,state))
+        self.assertEqual(saved.status_code,200,saved.text)
+        hit=self.client.post('/api/factors/match',headers=self.h,json={'items':[{'text':'bulon inox m10','scope':3,'cat':1,'unit':'kg'}]}).json()['results'][0]
+        self.assertEqual((hit['factor'],hit['pct']),('FE-031',100))
+        # A year with unapproved automatic assignments cannot be closed.
+        blocked=self.client.post('/api/closures',headers=self.h,json={'year':2025})
+        self.assertEqual(blocked.status_code,409);self.assertIn('sin aprobar',blocked.json()['detail'])
+        before=self.paged();after=copy.deepcopy(before['state'])
+        next(r for r in after['REC'] if r['rid']==rec['rid'])['fm'].update(ok=True,by='one',at='2026-09-23T12:00:00Z')
+        self.assertEqual(self.client.post('/api/state/changes',headers=self.h,json=self.diff(before,after)).status_code,200)
+        self.assertEqual(self.client.post('/api/closures',headers=self.h,json={'year':2025}).status_code,200)
+        # Malformed assignments are rejected.
+        before=self.paged();after=copy.deepcopy(before['state'])
+        next(r for r in after['REC'] if r['p'].startswith('2024'))['fm']={'pct':140}
+        self.assertEqual(self.client.post('/api/state/changes',headers=self.h,json=self.diff(before,after)).status_code,422)
 
     def test_vercel_database_configuration(self):
         with patch.dict(os.environ, {'VERCEL':'1','DATABASE_URL':'postgresql://integration-test'}):

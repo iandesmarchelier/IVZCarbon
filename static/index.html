@@ -775,6 +775,14 @@ table.invtbl tr.scoperow>td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
 .grid>*{min-width:0}
 .legend span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .clip{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fmb{font-variant-numeric:tabular-nums;cursor:help}
+.fmb.pend{border-style:dashed}
+.fmsel{max-width:250px;font-size:12px;padding:4px 6px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--surface)}
+.fmterms{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.fmterm{display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface)}
+.fmterm.lib{background:var(--sage-soft);border-color:var(--sage-line)}
+.fmterm button{border:none;background:none;cursor:pointer;padding:0;font-size:12px;line-height:1;color:inherit}
+.fmterm.add{cursor:pointer;border-style:dashed}
 /* ninguna tabla empuja el ancho de la página: si no entra, scrollea dentro de su tarjeta */
 .card-b.tight{overflow-x:auto}
 .card-h .right{flex-wrap:wrap;max-width:100%;min-width:0}
@@ -1735,6 +1743,15 @@ function traceHTML(r){
   blocks.push(traceBlock('Factor de emisión',`${nf(f.v,f.v<1?5:3)} kgCO₂e/${f.unit} — ${esc(f.act)}`,
     `<span class="num">${f.id}</span> · Fuente: <b>${esc(f.src)}</b> · revisión ${esc(f.rev)}${f.split?'<br>Desagregación: '+Object.entries(f.split).map(([g,v])=>`${GAS[g]} ${v}`).join(' · '):''}${f.supplier?'<br>Factor específico declarado por el proveedor '+esc((PVBI[f.supplier]||{}).name||''):''}`,
     {badges:srcBadge(f.supplier?'prov':'lib')}));
+  /* 4b · asignación automática del factor */
+  if(r.fm){ const m=r.fm, tied=fmTied(r);
+    blocks.push(traceBlock('Asignación del factor',m.pct==null?'Elegido a mano en la revisión':`${m.pct}% de similitud con «${esc(m.text)}»`,
+      `${(m.cands||[]).filter(c=>FBI[c.factor]).slice(0,5).map(c=>`<span class="num">${esc(c.factor)}</span> ${esc(FBI[c.factor].act)} · <b>${c.pct}%</b>${c.factor===r.factor?' ← asignado':''}`).join('<br>')}
+       ${tied.length?`<br><span style="color:var(--bad)">⚠ Empate: ${tied.map(esc).join(', ')} tiene la misma similitud. Elegí el factor correcto.</span>`:''}
+       <br>${m.ok?`<span class="pill ok">Aprobado</span> <span class="tiny dim">${esc(m.by||'')}${m.at?' · '+esc(new Date(m.at).toLocaleString('es-AR')):''}</span>`:`<span class="pill warn">Pendiente de aprobación</span> ${tied.length?'':`<button class="btn sm" onclick="fmApproveOne('${r.rid}');trace('${r.rid}')">Aprobar</button> `}<button class="btn sm ghost" onclick="closeDrawer();go('asignacion')">Revisar en Asignación de factores</button>`}
+       <div class="tiny dim" style="margin-top:4px">Similitud de texto calculada por ${m.engine==='pg_trgm'?'PostgreSQL (pg_trgm)':'el servidor'} entre los factores del mismo alcance, categoría y unidad.</div>`,
+      {badges:fmBadge(r)}));
+  }
   /* 5 · dato de actividad */
   let act=Object.entries(r.detail||{}).map(([k,v])=>`${esc(k)}: <b>${esc(v)}</b>`).join('<br>');
   if(r.po){ const pv=PVBI[r.po.prov];
@@ -1785,7 +1802,7 @@ function exportTrace(rid){
   const r=REC.find(x=>x.rid===rid); if(!r) return; const f=FBI[r.factor];
   const rows=[['campo','valor','origen'],['registro',r.rid,''],['periodo',r.p,''],['sitio',SBI[r.site]?SBI[r.site].name:'',''],['alcance',r.scope,''],['categoria',catLabel(catKey(r)),'IVZ Carbon'],
     ['regla',r.rule||'',''],['estado',r.cls?r.cls.state:'',''],['confianza',r.cls?r.cls.conf:'',''],['dato_actividad',r.qty,srcName(r.srcAct||srcOf(r))],['unidad',f.unit,''],
-    ['factor_id',f.id,f.src],['factor_valor',f.v,''],['kgCO2e',round(r.kg,4),'Calculado por IVZ Carbon'],['documento',r.origin.doc,r.origin.sys]];
+    ['factor_id',f.id,f.src],['factor_valor',f.v,''],['similitud_factor',r.fm&&r.fm.pct!=null?r.fm.pct:'',''],['asignacion_factor',r.fm?(r.fm.ok?'aprobada':'pendiente'):'',r.fm&&r.fm.by||''],['kgCO2e',round(r.kg,4),'Calculado por IVZ Carbon'],['documento',r.origin.doc,r.origin.sys]];
   if(r.po) rows.push(['orden_compra',r.po.oc,'SAP ERP'],['posicion',r.po.pos,'SAP ERP'],['proveedor',r.po.prov,'SAP ERP'],['material',r.po.mat,'SAP ERP'],['grupo_material',r.po.grp,'SAP ERP']);
   if(r.mov){ const mv=MOVBI()[r.mov], L=mv.legs[r.leg]; rows.push(['movimiento',mv.id,''],['guia',mv.logDoc,srcName(mv.distSrc)],['peso_t',L.t,''],['distancia_km',L.km,srcName(mv.distSrc)],['t_km',L.tkm,'Calculado por IVZ Carbon']); }
   downloadText(rows.map(x=>x.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n'),'trazabilidad_'+r.rid+'.csv','text/csv');
@@ -1810,7 +1827,7 @@ function recTable(rs,opt={}){
       <td class="dim tiny">${esc(SBI[r.site]?SBI[r.site].name:'Sin planta asignada')}</td>
       <td class="tiny">${opt.showScope!==false?scopePill(r.scope)+' ':''}<span class="dim">${esc(catInfo(catKey(r)).code)}</span></td>
       <td class="r num">${nf(r.qty,1)} <span class="dim">${FBI[r.factor].unit}</span></td>
-      <td class="num tiny dim">${r.factor}</td>
+      <td class="num tiny dim nowrap">${r.factor} ${fmBadge(r)}</td>
       <td class="r num strong">${nf(r.kg,1)}</td>
       <td>${srcBadge(srcOf(r))}</td>
       <td class="tiny nowrap" style="color:var(--accent)">Trazar →</td>
@@ -2124,11 +2141,11 @@ function cat1Panel(rs){
   return `<div class="card flat mt" data-tour="cat1-lines"><div class="card-h"><h3>Compras del ERP que alimentan la Categoría 1</h3><div class="sub">OC → línea de compra → clasificación → factor → emisión</div></div>
     <div class="card-b">${chain}
     <div class="flexrow" style="margin:14px 0 4px;gap:14px">${['fisico','spend','proveedor'].map(k=>`<span class="flexrow" style="gap:6px">${methodPill(k)} <span class="tiny dim">${byM[k]?nf(byM[k].n)+' líneas · '+t(byM[k].kg,1)+' t':'sin líneas'}</span></span>`).join('')}</div></div>
-    <div class="card-b tight"><div class="tblwrap" style="max-height:420px"><table><thead><tr><th>Período</th><th>OC</th><th>Pos.</th><th>Proveedor</th><th>Material</th><th>Grupo</th><th class="r">Cantidad</th><th>Unidad</th><th class="r">Importe USD</th><th>Método</th><th>Factor</th><th>Fuente del factor</th><th class="r">kgCO₂e</th><th>Estado</th></tr></thead><tbody>
+    <div class="card-b tight"><div class="tblwrap" style="max-height:420px"><table><thead><tr><th>Período</th><th>OC</th><th>Pos.</th><th>Proveedor</th><th>Material</th><th>Grupo</th><th class="r">Cantidad</th><th>Unidad</th><th class="r">Importe USD</th><th>Método</th><th>Factor · similitud</th><th>Fuente del factor</th><th class="r">kgCO₂e</th><th>Estado</th></tr></thead><tbody>
     ${lines.slice(0,60).map(r=>`<tr class="clickable" onclick="trace('${r.rid}')"><td class="tiny dim">${pLabel(r.p)}</td><td class="num tiny strong">${esc(r.po.oc)}</td><td class="num tiny">${r.po.pos}</td>
       <td class="tiny">${esc(PVBI[r.po.prov]?PVBI[r.po.prov].name:'—')}</td><td class="tiny">${esc(r.po.mat)}</td><td class="num tiny">${esc(r.po.grp)}</td>
       <td class="r num">${r.po.qty!=null?nf(r.po.qty):'—'}</td><td class="tiny dim">${r.po.unit}</td><td class="r num">${nf(r.po.amount,0)}</td><td>${methodPill(r.po.method)}</td>
-      <td class="num tiny">${r.factor}</td><td class="tiny dim">${esc(FBI[r.factor].src)}</td><td class="r num strong">${nf(r.kg,0)}</td><td>${r.cls.state==='auto'?'<span class="pill ok">Automático</span>':'<span class="pill warn">Requiere revisión</span>'}</td></tr>`).join('')}
+      <td class="num tiny nowrap">${r.factor} ${fmBadge(r)}</td><td class="tiny dim">${esc(FBI[r.factor].src)}</td><td class="r num strong">${nf(r.kg,0)}</td><td>${r.fm&&!r.fm.ok?'<span class="pill warn">Factor sin aprobar</span>':r.cls.state==='auto'?'<span class="pill ok">Automático</span>':'<span class="pill warn">Requiere revisión</span>'}</td></tr>`).join('')}
     </tbody></table></div></div></div>`;
 }
 /* Cat. 4 — resumen de movimientos de insumos */
@@ -3070,7 +3087,7 @@ V.transacciones=f=>{
          ${fld('Estado','state',[['all','Todos'],['auto','Clasificada'],['review','Requiere revisión']])}
        </div></div>
        <div class="card-b tight"><div class="tblwrap" style="max-height:560px"><table>
-       <thead><tr><th>Comprobante</th><th>Descripción</th><th>Sistema</th><th>Clasificación</th><th>Regla</th><th class="r">Dato</th><th class="r">kgCO₂e</th><th>Confianza</th><th>Estado</th></tr></thead><tbody>
+       <thead><tr><th>Comprobante</th><th>Descripción</th><th>Sistema</th><th>Clasificación</th><th>Regla</th><th class="r">Dato</th><th class="r">kgCO₂e</th><th>Confianza · similitud</th><th>Estado</th></tr></thead><tbody>
        ${rs.slice(0,70).map(r=>`<tr class="clickable" onclick="trace('${r.rid}')">
          <td class="num tiny">${esc(r.origin.doc.length>26?r.origin.doc.slice(0,26)+'…':r.origin.doc)}</td>
          <td class="strong tiny"><div class="clip" title="${esc(r.source)}">${esc(r.source)}</div></td>
@@ -3079,7 +3096,7 @@ V.transacciones=f=>{
          <td class="num tiny dim" title="${esc(r.rule?RBI[r.rule].when:'')}">${r.rule||'—'}</td>
          <td class="r num">${nf(r.qty,1)} <span class="dim">${FBI[r.factor].unit}</span></td>
          <td class="r num strong">${nf(r.kg,0)}</td>
-         <td>${confBar(r.cls)}</td>
+         <td class="nowrap">${r.fm?fmBadge(r):confBar(r.cls)}</td>
          <td class="nowrap">${r.cls.state==='auto'?'<span class="pill ok">Clasificada</span>':`<span class="pill warn">Revisión</span> <button class="btn sm" onclick="event.stopPropagation();txApplyRule('${r.rid}')">Confirmar</button>`}</td></tr>`).join('')||`<tr><td colspan="9"><div class="empty" style="padding:22px"><div class="big">Sin resultados</div>Ajustá los filtros para ver transacciones.</div></td></tr>`}
        </tbody></table></div>
        ${rs.length>70?`<div class="tiny dim" style="padding:8px 10px">Mostrando 70 de ${nf(rs.length)} transacciones.</div>`:''}</div></div>
@@ -3205,15 +3222,27 @@ async function revokeCarbonToken(id){
 }
 
 /* ---------------------- 9. Factores de emisión -------------------------- */
+/* términos de búsqueda de cada factor: los de la biblioteca IVZ (fijos), los aprendidos al aprobar y los agregados a mano */
+let FM_LIB=null;
+function factorTermsHTML(x){
+  if(FM_LIB===null){ FM_LIB={}; api('/api/factors/terms').then(t=>{FM_LIB=t;if(S.view==='factores')render();}).catch(()=>{}); }
+  const lib=FM_LIB[x.id]||[], own=x.alias||[];
+  return `<div class="fmterms">${lib.map(t=>`<span class="fmterm lib" title="Término de la biblioteca IVZ">${esc(t)}</span>`).join('')}${own.map((t,i)=>`<span class="fmterm" title="Término de la organización">${esc(t)}<button onclick="factorTermRemove('${esc(x.id)}',${i})" title="Quitar">×</button></span>`).join('')}<button class="fmterm add" onclick="factorTermAdd('${esc(x.id)}')">＋ término</button></div>`;
+}
+function factorTermAdd(id){ const f=FBI[id]; if(!f) return; const t=(prompt('Término de búsqueda para «'+f.act+'» (por ejemplo, cómo aparece en las órdenes de compra):')||'').trim(); if(!t) return;
+  const n=normTxt(t); if(n.length<2) return;
+  FACTORS.forEach(x=>{ if(x.alias){ const i=x.alias.findIndex(a=>normTxt(a)===n); if(i>=0) x.alias.splice(i,1); } });
+  (f.alias=f.alias||[]).push(t.slice(0,200)); toast('Término agregado a '+id+'.','✓'); render(); }
+function factorTermRemove(id,i){ const f=FBI[id]; if(f&&f.alias){ f.alias.splice(i,1); render(); } }
 V.factores=f=>{
   const used=groupSum(query(f),'factor');
   const sub=x=>x.scope===3?'Cat. '+x.cat:(x.scope===1?S1SUB[x.sub||'stat'].code:S2SUB[x.sub||'elec'].code);
-  return head('Catálogo de factores de emisión','Factores administrables por la organización, con fuente, revisión e incertidumbre. Cada cálculo guarda la versión del factor que se aplicó.',
+  return head('Catálogo de factores de emisión','Factores administrables por la organización, con fuente, revisión e incertidumbre. Cada cálculo guarda la versión del factor que se aplicó. Los términos de búsqueda sirven para asignar el factor por similitud.',
     `<button class="btn" onclick="toast('En el producto final abriría el formulario de alta de factor.','＋')">Agregar factor</button>
      <button class="btn" onclick="toast('Actualización simulada: se compararían las revisiones vigentes con la fuente publicada.','↻')">Buscar actualizaciones</button>`)
   +`<div class="card"><div class="card-b tight"><div class="tblwrap"><table>
     <thead><tr><th>ID</th><th>Actividad</th><th>Alcance</th><th>Ubicación</th><th class="r">Factor</th><th>Unidad</th><th class="r">Incert.</th><th>Fuente</th><th>Revisión</th><th class="r">Uso en el período</th></tr></thead><tbody>
-    ${FACTORS.map(x=>`<tr><td class="num tiny strong">${x.id}</td><td>${esc(x.act)}</td>
+    ${FACTORS.map(x=>`<tr><td class="num tiny strong">${x.id}</td><td>${esc(x.act)}${factorTermsHTML(x)}</td>
       <td>${scopePill(x.scope)}</td><td class="tiny dim">${sub(x)}${x.el?' · '+ELTYPE[x.el]:''}</td>
       <td class="r num strong">${x.v}</td><td class="tiny dim">kgCO₂e/${x.unit}</td>
       <td class="r num tiny ${x.unc>25?'':'dim'}" style="${x.unc>25?'color:var(--warn)':''}">±${x.unc}%</td>
@@ -3353,7 +3382,7 @@ function exportInventoryXLSX(f){
 /* ============================ navegación ================================ */
 const NAV=[
  ['Análisis',[['dash','Panel ejecutivo','dash'],['corporativo','Inventario corporativo','layers'],['trazabilidad','Trazabilidad','route'],['incertidumbre','Calidad e incertidumbre','target']]],
- ['Operación',[['planta','Ubicaciones y facturas','building'],['energia','Consumo energético','bolt'],['movilidad','Movilidad','globe'],['transacciones','Transacciones y clasificación','swap']]],
+ ['Operación',[['planta','Ubicaciones y facturas','building'],['energia','Consumo energético','bolt'],['movilidad','Movilidad','globe'],['transacciones','Transacciones y clasificación','swap'],['asignacion','Asignación de factores','check']]],
  ['Datos',[['integraciones','Integraciones ERP','plug'],['datacenter','Carga por Excel','upload'],['factores','Factores de emisión','sigma'],['reportes','Reportes','doc']]],
  ['Prototipo',[['acerca','Alcance del prototipo','info']]],
 ];
@@ -3367,7 +3396,7 @@ function render(){
   const tsEl=document.getElementById('tenantSites');
   if(tsEl) tsEl.textContent=nf(SITES.length)+' sitios · '+[...new Set(SITES.map(s=>s.cc))].join(' · ');
   document.getElementById('nav').innerHTML=NAV.map(([g,items])=>`<div class="navgrp">${g}</div>`+
-    items.map(([k,l,ic])=>{const pend=k==='transacciones'?query(f).filter(r=>r.cls&&r.cls.state!=='auto').length:0;
+    items.map(([k,l,ic])=>{const pend=k==='transacciones'?query(f).filter(r=>r.cls&&r.cls.state!=='auto').length:k==='asignacion'?fmPending(query(f)).length:0;
       return `<button class="navitem ${S.view===k?'on':''}" onclick="go('${k}')">${ico(ic)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span>${pend?`<span class="badge">${pend}</span>`:''}</button>`}).join('')).join('');
   const cur=NAV.flatMap(n=>n[1]).find(i=>i[0]===S.view);
   document.getElementById('crumb').innerHTML='Invenzis Carbon Industry <span style="opacity:.5">/</span> <b>'+(cur?cur[1]:'')+'</b>';
@@ -3737,6 +3766,168 @@ function tokenOverlapMatch(query,candidates,keyFn){
 function findSiteLoose(s){ if(!s)return null; const n=normTxt(s); return SITES.find(x=>normTxt(x.id)===n) || tokenOverlapMatch(s,SITES,x=>x.name); }
 function findBizLoose(s,scopeFilter){ if(!s)return null; const n=normTxt(s); let pool=BIZ; if(scopeFilter)pool=pool.filter(b=>scopeFilter.includes(b.scope));
   return pool.find(x=>normTxt(x.id)===n) || tokenOverlapMatch(s,pool,x=>x.name); }
+/* ===================== ASIGNACIÓN AUTOMÁTICA DE FACTORES =====================
+   Cada dato que entra sin factor (posición de OC, baja de stock, viaje, residuo, consumo…) recibe
+   el factor de la biblioteca más parecido a su descripción. La similitud la calcula PostgreSQL
+   (pg_trgm) en el servidor, entre los factores del mismo alcance, categoría y unidad. La
+   asignación queda en r.fm con su porcentaje y espera que una persona la apruebe; si otro factor
+   tiene el mismo porcentaje es un empate y se marca con advertencia. Al aprobar, el texto queda
+   como término de búsqueda del factor elegido: la próxima vez coincide al 100%. */
+const FM_HIGH=80, FM_MID=50;
+async function matchFactors(specs){
+  if(window.carbonSave) await window.carbonSave();  // los términos aprendidos recién aprobados ya tienen que estar en el servidor
+  const out=[];
+  for(let i=0;i<specs.length;i+=2000){
+    const res=await api('/api/factors/match',{method:'POST',body:JSON.stringify({items:specs.slice(i,i+2000)})});
+    res.results.forEach(x=>out.push({...x,engine:res.engine}));
+  }
+  return out;
+}
+/* lo que se busca y entre qué factores: null si no hay texto para comparar */
+function fmSpec(text,o={}){
+  const t=String(text||'').trim(); if(!t) return null;
+  return {text:t.slice(0,500),scope:o.scope||null,cat:o.cat||null,sub:o.sub||null,unit:o.unit||null,supplier:o.supplier||null};
+}
+function fmFrom(m){ return {text:m.text,auto:m.factor,pct:m.pct,tie:m.tie,cands:[{factor:m.factor,pct:m.pct},...(m.alts||[])],ok:false,engine:m.engine}; }
+function supplierIdOf(name){ const n=normTxt(name); if(!n) return null; const p=PROVS.find(p=>p.id===name||normTxt(p.name)===n); return p?p.id:null; }
+const fmPending=rs=>rs.filter(r=>r.fm&&!r.fm.ok);
+function fmTone(p){ return p==null?'':p>=FM_HIGH?'ok':p>=FM_MID?'warn':'err'; }
+/* factores con el mismo porcentaje que el asignado, mientras la asignación no fue aprobada */
+function fmTied(r){ const m=r.fm; if(!m||m.ok||!m.tie) return []; return (m.cands||[]).filter(c=>c.pct===m.pct&&c.factor!==r.factor).map(c=>c.factor); }
+function fmBadge(r){
+  const m=r.fm; if(!m) return '';
+  const f=FBI[r.factor], tied=fmTied(r);
+  const tip=(m.pct==null?'Factor elegido a mano en la revisión':'Similitud '+m.pct+'% entre «'+m.text+'» y «'+(f?f.act:r.factor)+'»')
+    +(tied.length?' · Empate con '+tied.join(', '):'')+(m.ok?' · Aprobado'+(m.by?' por '+m.by:''):' · Pendiente de aprobación');
+  return `<span class="pill ${fmTone(m.pct)} fmb${m.ok?'':' pend'}" title="${esc(tip)}">${tied.length?'⚠ ':''}${m.pct==null?'manual':m.pct+'%'}</span>`;
+}
+function fmSetFactor(r,fid){
+  const f=FBI[fid]; if(!f) return;
+  r.factor=fid; r.unit=f.unit; r.kg=r.qty*f.v; r.scope=f.scope; r.cat=f.cat||null;
+  if(f.scope!==3) r.sub=f.sub||(f.scope===2?'elec':'stat');
+  if(f.bio) r.bio=r.qty*f.bio; else delete r.bio;
+  if(r.fm){ const c=(r.fm.cands||[]).find(c=>c.factor===fid); r.fm.pct=c?c.pct:null; }
+}
+/* el texto aprobado pasa a ser término de búsqueda del factor (y deja de serlo de cualquier otro) */
+function fmLearn(r){
+  const t=normTxt(r.fm.text), f=FBI[r.factor]; if(!f||t.length<3) return;
+  FACTORS.forEach(x=>{ if(x!==f&&x.alias){ const i=x.alias.findIndex(a=>normTxt(a)===t); if(i>=0) x.alias.splice(i,1); } });
+  if(normTxt(f.act)===t||(f.alias||[]).some(a=>normTxt(a)===t)) return;
+  (f.alias=f.alias||[]).push(r.fm.text.trim().slice(0,200));
+  if(f.alias.length>500) f.alias.shift();
+}
+function fmApprove(r){
+  if(!r.fm||r.fm.ok) return false;
+  r.fm.ok=true; r.fm.by=window.carbonUser?window.carbonUser():'Usuario IVZ Carbon'; r.fm.at=new Date().toISOString();
+  fmLearn(r); return true;
+}
+function fmApproveOne(rid){ const r=REC.find(x=>x.rid===rid); if(r&&fmApprove(r)){ S.fmSel.delete(rid); toast('Factor '+r.factor+' aprobado para «'+r.fm.text+'».','✓'); render(); } }
+function fmChoose(rid,fid){
+  const r=REC.find(x=>x.rid===rid); if(!r||!r.fm||!FBI[fid]) return;
+  fmSetFactor(r,fid); r.fm.ok=false; fmApprove(r); S.fmSel.delete(rid);
+  /* el texto ya es término del factor elegido: los pendientes con el mismo texto coinciden al 100% (siguen sin aprobar) */
+  const t=normTxt(r.fm.text); let n=0;
+  REC.forEach(x=>{ if(x!==r&&x.fm&&!x.fm.ok&&normTxt(x.fm.text)===t&&FBI[x.factor].unit===FBI[fid].unit){
+    x.fm.cands=[{factor:fid,pct:100},...(x.fm.cands||[]).filter(c=>c.factor!==fid)]; fmSetFactor(x,fid); x.fm.tie=false; n++; } });
+  toast('Asignado '+fid+' — '+FBI[fid].act+' y aprobado.'+(n?' '+nf(n)+' registros pendientes con el mismo texto pasaron a '+fid+'.':''),'✓'); render();
+}
+function fmUndo(rid){ const r=REC.find(x=>x.rid===rid); if(!r||!r.fm) return; r.fm.ok=false; delete r.fm.by; delete r.fm.at; render(); }
+function fmToggle(rid,on){ if(on) S.fmSel.add(rid); else S.fmSel.delete(rid); render(); }
+function fmSelectVisible(ids){ ids.forEach(id=>S.fmSel.add(id)); render(); }
+function fmApproveSelected(){
+  const by=new Map(REC.map(r=>[r.rid,r])); let n=0, tied=0;
+  S.fmSel.forEach(id=>{ const r=by.get(id); if(!r||!r.fm||r.fm.ok) return; if(fmTied(r).length){ tied++; return; } if(fmApprove(r)) n++; });
+  S.fmSel.clear();
+  toast(nf(n)+' asignaciones aprobadas.'+(tied?' '+nf(tied)+' con empate quedaron pendientes: elegí el factor de cada una.':''),tied?'⚠':'✓'); render();
+}
+/* texto y filtros para buscar el factor de un registro ya cargado */
+function recMatchSpec(r){
+  const f=FBI[r.factor]; if(!f) return null;
+  const o={scope:f.scope,cat:f.scope===3?f.cat:null,unit:f.unit};
+  const text=r.source.split(' · ')[0];
+  if(r.type==='purchase') return fmSpec(text,{...o,supplier:r.po&&r.po.prov||null});
+  if(r.type==='commute') return fmSpec(text+' '+((SBI[r.site]||{}).country||''),o);
+  if(r.type==='travel'||r.type==='waste') return fmSpec(text,o);
+  return null;
+}
+async function fmAnalyzeExisting(){
+  const closed=window.carbonClosedYears?window.carbonClosedYears():new Set();
+  const todo=query(S.f).filter(r=>!r.fm&&!closed.has(+r.p.slice(0,4))).map(r=>[r,recMatchSpec(r)]).filter(([,s])=>s);
+  if(!todo.length){ toast('No hay compras, viajes, residuos ni traslados sin asignación automática en el perímetro (años abiertos).','—'); return; }
+  if(!confirm('Buscar el factor por similitud para '+nf(todo.length)+' registros del perímetro (compras, viajes, residuos y traslados)?\n\nSi el factor más parecido es otro, se reemplaza y se recalcula la emisión. Todos quedan pendientes de aprobación.')) return;
+  S.fmBusy=true; render();
+  try{
+    const res=await matchFactors(todo.map(([,s])=>s)); let n=0, changed=0;
+    todo.forEach(([r],i)=>{ const m=res[i]; if(!m||!m.factor) return; const before=r.factor; r.fm=fmFrom(m); if(m.factor!==before){ fmSetFactor(r,m.factor); changed++; } n++; });
+    S.fmLastEngine=res[0]&&res[0].engine;
+    toast(nf(n)+' registros con factor asignado por similitud'+(changed?' ('+nf(changed)+' cambiaron de factor)':'')+'. Quedan pendientes de aprobación.','✓');
+  }catch(e){ toast('No se pudo buscar factores por similitud: '+e.message,'⚠'); }
+  finally{ S.fmBusy=false; render(); }
+}
+const FM_TYPES={purchase:'Compras',travel:'Viajes de negocio',waste:'Residuos',commute:'Traslado de colaboradores',transport:'Transporte',fuel:'Combustibles',elec:'Energía',fugitive:'Refrigerantes',other:'Otras actividades'};
+S.fmf=S.fmf||{state:'pend',type:'all',band:'all',q:''}; S.fmSel=S.fmSel||new Set();
+function fmSetF(k,v){ S.fmf[k]=v; S.fmSel.clear(); render(); }
+function fmOptions(r){
+  const f=FBI[r.factor], cands=(r.fm.cands||[]).filter(c=>FBI[c.factor]), seen=new Set(cands.map(c=>c.factor));
+  const others=FACTORS.filter(x=>!seen.has(x.id)&&x.unit===f.unit&&x.scope===f.scope&&(x.cat||null)===(f.cat||null));
+  if(!seen.has(r.factor)) others.unshift(f);
+  return cands.map(c=>`<option value="${esc(c.factor)}" ${c.factor===r.factor?'selected':''}>${c.pct}% · ${esc(c.factor)} — ${esc(FBI[c.factor].act)}</option>`).join('')
+    +(others.length?`<optgroup label="Otros factores con la misma unidad">${others.map(x=>`<option value="${esc(x.id)}" ${x.id===r.factor?'selected':''}>${esc(x.id)} — ${esc(x.act)}</option>`).join('')}</optgroup>`:'');
+}
+V.asignacion=f=>{
+  const base=query(f).filter(r=>r.fm), x=S.fmf;
+  const pend=fmPending(base), ties=pend.filter(r=>fmTied(r).length);
+  let rs=base;
+  if(x.state==='pend') rs=rs.filter(r=>!r.fm.ok); else if(x.state==='ok') rs=rs.filter(r=>r.fm.ok); else if(x.state==='tie') rs=rs.filter(r=>fmTied(r).length);
+  if(x.type!=='all') rs=rs.filter(r=>r.type===x.type);
+  if(x.band!=='all') rs=rs.filter(r=>fmTone(r.fm.pct)===x.band);
+  if(x.q){ const q=normTxt(x.q); rs=rs.filter(r=>normTxt([r.fm.text,r.source,r.factor,(FBI[r.factor]||{}).act,r.po&&r.po.oc,r.origin.doc].join(' ')).includes(q)); }
+  rs=rs.slice().sort((a,b)=>(a.fm.pct==null?-1:a.fm.pct)-(b.fm.pct==null?-1:b.fm.pct)||b.kg-a.kg);
+  const shown=rs.slice(0,150), selectable=shown.filter(r=>!r.fm.ok&&!fmTied(r).length).map(r=>r.rid);
+  const band=t=>pend.filter(r=>fmTone(r.fm.pct)===t).length;
+  const avg=pend.length?sum(pend,r=>r.fm.pct||0)/pend.length:null;
+  const types=[...new Set(base.map(r=>r.type))];
+  const fld=(lab,key,opts)=>`<div class="fld"><label>${lab}</label><select onchange="fmSetF('${key}',this.value)">${opts.map(([v,l])=>`<option value="${v}" ${x[key]===v?'selected':''}>${esc(l)}</option>`).join('')}</select></div>`;
+  return head('Asignación de factores','El sistema elige el factor de la biblioteca más parecido a cada dato de actividad (similitud de texto con pg_trgm de PostgreSQL). Cada asignación se aprueba a mano; las más lejanas aparecen primero.',
+    `<button class="btn" ${S.fmBusy?'disabled':''} onclick="fmAnalyzeExisting()">${S.fmBusy?'Buscando factores…':'Analizar registros existentes'}</button>
+     <button class="btn primary" ${S.fmSel.size?'':'disabled'} onclick="fmApproveSelected()">Aprobar seleccionados (${nf(S.fmSel.size)})</button>`)
+  +`<div class="grid g4">
+      ${kpi('Pendientes de aprobación',nf(pend.length),'',pend.length?'<span class="pill warn">Acción pendiente</span>':'<span class="pill ok">Al día</span>',{icon:'check',onclick:"fmSetF('state','pend')"})}
+      ${kpi('Empates',nf(ties.length),'',ties.length?'<span class="pill err">Elegir el factor a mano</span>':'<span class="dim tiny">ningún factor con la misma similitud</span>',{icon:'info',onclick:"fmSetF('state','tie')"})}
+      ${kpi('Similitud promedio',avg==null?'—':nf(avg,0),avg==null?'':'%','<span class="dim tiny">de las asignaciones pendientes</span>',{icon:'search',bar:avg||0})}
+      ${kpi('Aprobadas',nf(base.length-pend.length),'',`<span class="dim tiny">de ${nf(base.length)} asignaciones en ${perimLabel(f)}</span>`,{icon:'leaf',onclick:"fmSetF('state','ok')"})}
+   </div>
+   <div class="flexrow mt" style="gap:8px">
+     <span class="tiny dim">Pendientes por similitud:</span>
+     <button class="btn sm ${x.band==='err'?'primary':''}" onclick="fmSetF('band','${x.band==='err'?'all':'err'}')"><span class="pill err">&lt; ${FM_MID}%</span> ${nf(band('err'))}</button>
+     <button class="btn sm ${x.band==='warn'?'primary':''}" onclick="fmSetF('band','${x.band==='warn'?'all':'warn'}')"><span class="pill warn">${FM_MID}–${FM_HIGH-1}%</span> ${nf(band('warn'))}</button>
+     <button class="btn sm ${x.band==='ok'?'primary':''}" onclick="fmSetF('band','${x.band==='ok'?'all':'ok'}')"><span class="pill ok">≥ ${FM_HIGH}%</span> ${nf(band('ok'))}</button>
+   </div>
+   <div class="card mt"><div class="card-h"><h3>Asignaciones</h3>
+       <div class="sub">${nf(rs.length)} de ${nf(base.length)} · de menor a mayor similitud</div>
+       <div class="right"><div class="searchbox"><span class="dim">⌕</span><input placeholder="Buscar texto, OC o factor" value="${esc(x.q)}" oninput="S.fmf.q=this.value;clearTimeout(window._d);window._d=setTimeout(render,280)"></div>
+         <button class="btn sm" ${selectable.length?'':'disabled'} onclick="fmSelectVisible(${esc(JSON.stringify(selectable))})">Seleccionar visibles sin empate</button></div></div>
+     <div class="card-b" style="padding-bottom:0"><div class="filtrow">
+       ${fld('Estado','state',[['pend','Pendientes'],['tie','Con empate'],['ok','Aprobadas'],['all','Todas']])}
+       ${fld('Tipo de dato','type',[['all','Todos'],...types.map(t=>[t,FM_TYPES[t]||t])])}
+     </div></div>
+     <div class="card-b tight"><div class="tblwrap" style="max-height:620px"><table>
+     <thead><tr><th></th><th>Período</th><th>Tipo</th><th>Dato de actividad</th><th>Similitud</th><th>Factor asignado</th><th class="r">kgCO₂e</th><th></th></tr></thead><tbody>
+     ${shown.map(r=>{ const tied=fmTied(r), fa=FBI[r.factor];
+       return `<tr>
+       <td><input type="checkbox" ${S.fmSel.has(r.rid)?'checked':''} ${r.fm.ok||tied.length?'disabled':''} onchange="fmToggle('${r.rid}',this.checked)" title="${tied.length?'Con empate: elegí el factor en la lista':''}"></td>
+       <td class="tiny dim nowrap">${pLabel(r.p)}</td>
+       <td class="tiny">${esc(FM_TYPES[r.type]||r.type)}</td>
+       <td><div class="strong tiny clip" title="${esc(r.source)}">${esc(r.fm.text)}</div><div class="tiny dim">${r.po&&r.po.oc&&r.po.oc!=='—'?'OC '+esc(r.po.oc)+' · ':''}${nf(r.qty,1)} ${esc(fa.unit)} · <a href="javascript:void(0)" onclick="trace('${r.rid}')">${r.rid}</a></div></td>
+       <td class="nowrap">${fmBadge(r)}${tied.length?`<div class="tiny" style="color:var(--bad);margin-top:3px">Empate con ${tied.map(esc).join(', ')}</div>`:''}</td>
+       <td>${r.fm.ok?`<div class="tiny"><b class="num">${esc(r.factor)}</b> — ${esc(fa.act)}</div>`:`<select class="fmsel" onchange="fmChoose('${r.rid}',this.value)">${fmOptions(r)}</select>`}</td>
+       <td class="r num">${nf(r.kg,0)}</td>
+       <td class="nowrap">${r.fm.ok?`<span class="tiny dim">Aprobado${r.fm.by?' · '+esc(r.fm.by):''}</span> <button class="btn sm ghost" onclick="fmUndo('${r.rid}')">Deshacer</button>`:`<button class="btn sm" onclick="fmApproveOne('${r.rid}')">Aprobar</button>`}</td></tr>`; }).join('')
+       ||`<tr><td colspan="8"><div class="empty" style="padding:22px"><div class="big">${base.length?'Sin resultados':'Todavía no hay asignaciones automáticas'}</div>${base.length?'Ajustá los filtros.':'Se crean al importar compras, viajes, residuos, consumos u otras actividades sin columna de factor, o con «Analizar registros existentes».'}</div></td></tr>`}
+     </tbody></table></div>
+     ${rs.length>150?`<div class="tiny dim" style="padding:8px 10px">Mostrando las 150 asignaciones de menor similitud de ${nf(rs.length)}.</div>`:''}</div></div>
+   <div class="note mt">El porcentaje compara el texto del dato (material de la OC, concepto del viaje, residuo…) con el título y los términos de búsqueda de cada factor del mismo alcance, categoría y unidad. <b>Empate</b>: otro factor tiene el mismo porcentaje; no se aprueba en lote, hay que elegir el factor. Al aprobar, el texto queda como término de búsqueda del factor y la próxima vez coincide al 100%. Un año con asignaciones pendientes no se puede cerrar.</div>`;
+};
 /* ============================ 0. SITIOS Y PLANTAS ========================= */
 /* Alta/baja de sitios reales (SITES/SBI) — lo que consume "Planta por defecto"
    en actividades, facturas y consumos periódicos. Es deliberadamente liviano
@@ -3848,6 +4039,7 @@ function addDirectRecord(o){
     detail:o.detail||{},po:o.po||null,mov:o.mov||null,leg:o.leg,
     origin:{sys:o.sys||SYS.plan,doc:o.doc||'—',method:o.method||'Carga por Excel — dato de actividad × factor',by:o.by||'Usuario IVZ Carbon'},
     cls:{state:'auto',conf:round(84+rnd()*14)}});
+  if(o.fm) r.fm=o.fm;
   postProcessRecord(r);
   return {ok:1,rec:r};
 }
@@ -3929,9 +4121,14 @@ function clearPriorActivity(siteId,period,activityId){
     }
   }
 }
+/* dato de una actividad configurada: se busca entre los factores de su alcance, categoría y unidad */
+function activityMatchSpec(b,site,text){
+  const sub=b.scope===2&&FBI[b.factor]?FBI[b.factor].sub||'elec':null;  // electricidad con electricidad, vapor con vapor
+  return fmSpec([text||b.name,site&&site.country].filter(Boolean).join(' '),{scope:b.scope,cat:b.scope===3?b.cat:null,unit:b.unit,sub}); }
 function registerActivityRecord(o){
   const b=BIZBI()[o.activityId]; if(!b) return null;
-  if(!FBI[b.factor]){ toast('La actividad «'+b.name+'» todavía no tiene un factor de emisión vinculado — el registro se guardó pero no suma emisiones. Vinculá un factor desde Factores de emisión.','⚠'); return null; }
+  const factor=o.fm&&FBI[o.fm.auto]?o.fm.auto:b.factor;
+  if(!FBI[factor]){ toast('La actividad «'+b.name+'» todavía no tiene un factor de emisión vinculado — el registro se guardó pero no suma emisiones. Vinculá un factor desde Factores de emisión.','⚠'); return null; }
   ensurePeriod(o.period);
   const siteId=o.siteId||(SITES[0]?SITES[0].id:'');
   const site=siteId?SBI[siteId]:null;
@@ -3939,10 +4136,11 @@ function registerActivityRecord(o){
   clearPriorActivity(siteId,o.period,o.activityId);
   const r=rec({p:o.period,type,site:siteId,proc:null,line:null,activityId:o.activityId,
     source:b.name+(o.doc?' · '+o.doc:(site?' · '+site.name:'')),
-    qty:+o.qty, unit:b.unit, factor:b.factor,
+    qty:+o.qty, unit:FBI[factor].unit, factor,
     detail:Object.fromEntries(Object.entries({Proveedor:o.provider,Importe:o.amount?nf(o.amount,2)+' '+(o.currency||''):null,Observaciones:o.notes}).filter(([,v])=>v)),
     origin:{sys:'Centro de Datos — '+(o.via||'carga manual'),doc:o.doc||'—',method:'Carga periódica de actividad de negocio',by:o.by||'Usuario IVZCarbon'}});
   if(b.scope===3) r.cls={state:'auto',conf:96};
+  if(o.fm) r.fm=o.fm;
   /* misma electricidad, dos cálculos: igual que en una factura cargada a mano
      (addInvoiceRecord), toda actividad de Alcance 2 tipo "elec" — venga de Excel
      o de carga manual — genera también su par de Alcance 3 Cat. 3 (pérdidas de
@@ -3955,7 +4153,7 @@ function registerActivityRecord(o){
     r.pair=d.rid; d.pair=r.rid;
     postProcessRecord(d);
   }
-  logImport(b.scope===1||b.scope===2?'Consumo energético':'Actividad de negocio', b.name+' · '+pLabel(o.period)+' · '+nf(o.qty,1)+' '+b.unit, 1);
+  logImport(b.scope===1||b.scope===2?'Consumo energético':'Actividad de negocio', b.name+' · '+pLabel(o.period)+' · '+nf(o.qty,1)+' '+r.unit, 1);
   return r;
 }
 
@@ -4140,7 +4338,14 @@ function consumoModalHTML(){
   </div>
   <div class="modal-f"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="cmSubmit()">Guardar consumo</button></div>`;
 }
-function cmSubmit(){
+/* carga manual de una actividad: el factor también sale por similitud y queda pendiente de aprobación */
+async function manualMatch(b,site){
+  const spec=activityMatchSpec(b,site); if(!spec) return null;
+  const btn=document.querySelector('.modal-f .btn.primary'); if(btn) btn.disabled=true;
+  try{ const [m]=await matchFactors([spec]); if(m.factor) return fmFrom(m); toast(m.error+' Se usa el factor de la actividad.','⚠'); return null; }
+  catch(e){ toast('No se pudo buscar el factor por similitud: '+e.message,'⚠'); if(btn) btn.disabled=false; return false; }
+}
+async function cmSubmit(){
   const qty=+document.getElementById('cmQty').value;
   const period=document.getElementById('cmPeriod').value;
   const activityId=document.getElementById('cmAct').value;
@@ -4148,9 +4353,11 @@ function cmSubmit(){
   if(!activityId||!BIZBI()[activityId]){ toast('No hay ninguna fuente energética configurada todavía — creá una actividad en Configuración → Actividades de negocio.','⚠'); return; }
   if(!validPeriod(period)){ toast('Elegí un período válido (mes y año).','⚠'); return; }
   if(!(qty>0)){ toast('Ingresá una cantidad mayor a cero.','⚠'); return; }
-  registerActivityRecord({period,activityId,siteId:document.getElementById('cmSite').value,
-    qty,doc:document.getElementById('cmDoc').value.trim(),provider:document.getElementById('cmProv').value.trim(),via:'carga manual'});
-  closeModal(); toast('Consumo cargado y sumado al inventario del período.','✓'); render();
+  const siteId=document.getElementById('cmSite').value, o={period,activityId,siteId,
+    qty,doc:document.getElementById('cmDoc').value.trim(),provider:document.getElementById('cmProv').value.trim(),via:'carga manual'};
+  const fm=await manualMatch(BIZBI()[activityId],SBI[siteId]); if(fm===false) return;
+  const r=registerActivityRecord({...o,fm});
+  closeModal(); toast(r&&r.fm?'Consumo cargado con '+r.factor+' ('+r.fm.pct+'% de similitud), pendiente de aprobación.':'Consumo cargado y sumado al inventario del período.','✓'); render();
 }
 function otraModalHTML(){
   return `<div class="modal-h"><div style="flex:1"><h3>Agregar actividad de negocio</h3></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
@@ -4173,17 +4380,19 @@ function otraModalHTML(){
   </div>
   <div class="modal-f"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="omSubmit()">Guardar actividad</button></div>`;
 }
-function omSubmit(){
+async function omSubmit(){
   const qty=+document.getElementById('omQty').value, period=document.getElementById('omPeriod').value;
   const activityId=document.getElementById('omAct').value;
   if(!SITES.length){ toast('Primero creá al menos una planta en Configuración → Plantas y sitios.','⚠'); return; }
   if(!activityId||!BIZBI()[activityId]){ toast('No hay ninguna actividad de negocio configurada todavía — creá una en Configuración → Actividades de negocio.','⚠'); return; }
   if(!validPeriod(period)){ toast('Elegí un período válido.','⚠'); return; }
   if(!(qty>0)){ toast('Ingresá una cantidad mayor a cero.','⚠'); return; }
-  registerActivityRecord({period,activityId,siteId:document.getElementById('omSite').value,
+  const siteId=document.getElementById('omSite').value, o={period,activityId,siteId,
     qty,amount:+document.getElementById('omAmount').value||null,currency:document.getElementById('omCur').value,
-    doc:document.getElementById('omDoc').value.trim(),notes:document.getElementById('omNotes').value.trim(),via:'carga manual'});
-  closeModal(); toast('Actividad cargada.','✓'); render();
+    doc:document.getElementById('omDoc').value.trim(),notes:document.getElementById('omNotes').value.trim(),via:'carga manual'};
+  const fm=await manualMatch(BIZBI()[activityId],SBI[siteId]); if(fm===false) return;
+  const r=registerActivityRecord({...o,fm});
+  closeModal(); toast(r&&r.fm?'Actividad cargada con '+r.factor+' ('+r.fm.pct+'% de similitud), pendiente de aprobación.':'Actividad cargada.','✓'); render();
 }
 function openConsumoModal(){
   if(!SITES.length){ toast('Primero creá al menos una planta en Configuración → Plantas y sitios.','⚠'); return; }
@@ -4233,7 +4442,9 @@ const DATA_TYPES = {
     const site=findSiteLoose(row.planta); if(!site) return {err:'Planta no reconocida: «'+row.planta+'».'};
     const act=findBizLoose(row.fuente,[2]); if(!act) return {err:'Fuente energética no reconocida: «'+row.fuente+'». Agregala primero como actividad de negocio.'};
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
-    registerActivityRecord({period:row.periodo,activityId:act.id,siteId:site.id,qty:+row.cantidad,doc:row.documento,provider:row.proveedor,via:'importación Excel'}); return {ok:1}; }},
+    if(row._fm&&!row._fm.factor) return {err:row._fm.error};
+    registerActivityRecord({period:row.periodo,activityId:act.id,siteId:site.id,qty:+row.cantidad,doc:row.documento,provider:row.proveedor,via:'importación Excel',fm:row._fm&&fmFrom(row._fm)}); return {ok:1}; },
+  match(row){ const act=findBizLoose(row.fuente,[2]); return act?activityMatchSpec(act,findSiteLoose(row.planta),row.fuente):null; }},
  combustibles:{label:'Combustibles',ic:'flame',group:'periodica',desc:'Gas natural, gasoil, GLP y refrigerantes — Alcance 1, estacionaria, móvil o fugitiva.',
   fields:[{k:'periodo',l:'Período (AAAA-MM)',req:1,syn:['periodo','fecha','mes']},{k:'planta',l:'Planta',req:1,syn:['planta','site']},
    {k:'combustible',l:'Combustible',req:1,syn:['combustible','fuente','fuel']},{k:'cantidad',l:'Cantidad',req:1,syn:['cantidad','consumo','litros','m3']},
@@ -4243,11 +4454,13 @@ const DATA_TYPES = {
     const site=findSiteLoose(row.planta); if(!site) return {err:'Planta no reconocida: «'+row.planta+'».'};
     const act=findBizLoose(row.combustible,[1]); if(!act) return {err:'Combustible no reconocido: «'+row.combustible+'». Agregalo como actividad de negocio.'};
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
-    registerActivityRecord({period:row.periodo,activityId:act.id,siteId:site.id,qty:+row.cantidad,doc:row.documento,via:'importación Excel'}); return {ok:1}; }},
- compras:{label:'Compras (Cat. 1)',ic:'store',group:'periodica',desc:'Posiciones de orden de compra — bienes y servicios adquiridos, por dato físico o por gasto.',
-  fields:[{k:'periodo',l:'Período (AAAA-MM)',req:1,syn:['periodo','fecha','mes']},{k:'orden_compra',l:'Orden de compra',syn:['orden_compra','oc','po','pedido']},
+    if(row._fm&&!row._fm.factor) return {err:row._fm.error};
+    registerActivityRecord({period:row.periodo,activityId:act.id,siteId:site.id,qty:+row.cantidad,doc:row.documento,via:'importación Excel',fm:row._fm&&fmFrom(row._fm)}); return {ok:1}; },
+  match(row){ const act=findBizLoose(row.combustible,[1]); return act?activityMatchSpec(act,null,[row.combustible,row.uso].filter(Boolean).join(' ')):null; }},
+ compras:{label:'Compras (Cat. 1)',ic:'store',group:'periodica',desc:'Posiciones de orden de compra o bajas de stock — bienes y servicios adquiridos, por dato físico o por gasto. Sin columna de factor, se asigna el más parecido de la biblioteca.',
+  fields:[{k:'periodo',l:'Período (AAAA-MM)',req:1,syn:['periodo','fecha','mes']},{k:'orden_compra',l:'Orden de compra / documento',syn:['orden_compra','oc','po','pedido','documento_material','baja_stock','reserva']},
    {k:'posicion',l:'Posición',syn:['posicion','pos','item']},{k:'planta',l:'Planta',req:1,syn:['planta','site','centro']},
-   {k:'proveedor',l:'Proveedor',syn:['proveedor','provider','acreedor']},{k:'material',l:'Material',req:1,syn:['material','descripcion','texto_breve']},
+   {k:'proveedor',l:'Proveedor',syn:['proveedor','provider','acreedor']},{k:'material',l:'Material',req:1,syn:['material','descripcion','texto_breve','articulo','denominacion']},
    {k:'grupo_material',l:'Grupo de material',syn:['grupo_material','grupo','matkl']},{k:'cantidad',l:'Cantidad',req:1,syn:['cantidad','qty','menge']},
    {k:'unidad',l:'Unidad',syn:['unidad','uom','meins']},{k:'importe',l:'Importe',syn:['importe','monto','valor','netwr']},
    {k:'factor',l:'Factor de emisión',syn:['factor','factor_emision','ef']}],
@@ -4256,14 +4469,16 @@ const DATA_TYPES = {
   apply(row){ if(!validPeriod(row.periodo)) return {err:'Período inválido (usá AAAA-MM).'};
     const site=findSiteLoose(row.planta); if(!site) return {err:'Planta no reconocida: «'+row.planta+'».'};
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
-    const fid=row.factor||((row.unidad||'').toLowerCase().includes('usd')?'FE-032':'FE-030');
-    const method=(row.unidad||'').toLowerCase().includes('usd')?'spend':'fisico';
+    if(row._fm&&!row._fm.factor) return {err:row._fm.error};
+    const fid=row.factor||(row._fm?row._fm.factor:((row.unidad||'').toLowerCase().includes('usd')?'FE-032':'FE-030'));
+    const method=FBI[fid]&&FBI[fid].unit==='USD'?'spend':'fisico';
     return addDirectRecord({p:row.periodo,type:'purchase',site:site.id,source:(row.material||'Compra')+(row.proveedor?' · '+row.proveedor:''),
       qty:row.cantidad,factor:fid,src:'excel',
       detail:{'Proveedor':row.proveedor||'—','Grupo de material':row.grupo_material||'—'},
-      po:{oc:row.orden_compra||'—',pos:row.posicion||'—',prov:row.proveedor||null,mat:row.material,grp:row.grupo_material||'',qty:method==='spend'?null:+row.cantidad,unit:row.unidad||'kg',amount:+row.importe||0,cur:'USD',method},
-      doc:row.orden_compra?('OC '+row.orden_compra):'Carga Excel — compras',sys:SYS.compras,
-      method:method==='spend'?'Método basado en gasto (spend-based)':'Cantidad física × factor por material'}); }},
+      po:{oc:row.orden_compra||'—',pos:row.posicion||'—',prov:supplierIdOf(row.proveedor)||row.proveedor||null,mat:row.material,grp:row.grupo_material||'',qty:method==='spend'?null:+row.cantidad,unit:row.unidad||(FBI[fid]?FBI[fid].unit:'kg'),amount:+row.importe||0,cur:'USD',method},
+      doc:row.orden_compra?('OC '+row.orden_compra):'Carga Excel — compras',sys:SYS.compras,fm:row._fm&&fmFrom(row._fm),
+      method:method==='spend'?'Método basado en gasto (spend-based)':'Cantidad física × factor por material'}); },
+  match(row){ return row.factor?null:fmSpec(row.material,{scope:3,cat:1,unit:row.unidad,supplier:supplierIdOf(row.proveedor)}); }},
  movimientos:{label:'Movimientos de materiales',ic:'truck',group:'periodica',desc:'Recepciones de material con su ruta: origen, destino, modo, peso y distancia (Cat. 4 o Alcance 1 si es flota propia).',
   fields:[{k:'movimiento_id',l:'ID del movimiento',syn:['movimiento_id','id','mov']},{k:'fecha',l:'Fecha (AAAA-MM-DD)',req:1,syn:['fecha','date']},
    {k:'documento_erp',l:'Documento ERP',syn:['documento_erp','documento_material','migo','doc_erp']},{k:'orden_compra',l:'Orden de compra',syn:['orden_compra','oc','po']},
@@ -4287,9 +4502,11 @@ const DATA_TYPES = {
     const site=findSiteLoose(row.planta); if(!site) return {err:'Planta no reconocida: «'+row.planta+'».'};
     const n=normTxt(row.modo); const mode=n.includes('mar')||n.includes('fluv')?'sea':n.includes('aer')||n.includes('avi')?'air':'road';
     if(!(+row.tkm>0)) return {err:'Actividad inválida (t·km).'};
-    return addDirectRecord({p:row.periodo,type:'transport',site:site.id,source:'Transporte '+MODES[mode].n.toLowerCase()+' — consolidado',
-      qty:row.tkm,factor:MODES[mode].fe,src:'excel',detail:{'Modo':MODES[mode].n},doc:row.documento||'Consolidado logístico',
-      sys:SYS.log,method:'Actividad consolidada en t·km × factor por modo'}); }},
+    if(row._fm&&!row._fm.factor) return {err:row._fm.error};
+    return addDirectRecord({p:row.periodo,type:'transport',site:site.id,source:'Transporte '+row.modo+' — consolidado',
+      qty:row.tkm,factor:row._fm?row._fm.factor:MODES[mode].fe,src:'excel',detail:{'Modo':row.modo},doc:row.documento||'Consolidado logístico',fm:row._fm&&fmFrom(row._fm),
+      sys:SYS.log,method:'Actividad consolidada en t·km × factor por modo'}); },
+  match(row){ return fmSpec('Transporte '+row.modo,{scope:3,cat:4,unit:'t·km'}); }},
  residuos:{label:'Residuos',ic:'box',group:'periodica',desc:'Residuos generados en las operaciones, por tipo de tratamiento (Cat. 5).',
   fields:[{k:'periodo',l:'Período (AAAA-MM)',req:1,syn:['periodo','fecha','mes']},{k:'planta',l:'Planta',req:1,syn:['planta','site']},
    {k:'residuo',l:'Tipo de residuo',req:1,syn:['residuo','tipo','corriente']},{k:'cantidad',l:'Cantidad (kg)',req:1,syn:['cantidad','kg','peso']},
@@ -4297,11 +4514,12 @@ const DATA_TYPES = {
   sample:[['2026-08','Planta Vicente López','Chatarra metálica','6800','FE-051','Manifiesto 48211'],['2026-08','Planta Vicente López','Residuo asimilable','2100','FE-052','Manifiesto 48212']],
   apply(row){ if(!validPeriod(row.periodo)) return {err:'Período inválido (usá AAAA-MM).'};
     const site=findSiteLoose(row.planta); if(!site) return {err:'Planta no reconocida: «'+row.planta+'».'};
-    const n=normTxt(row.residuo);
-    const fid=row.factor||(n.includes('chatarra')||n.includes('metal')?'FE-051':n.includes('aceite')?'FE-053':n.includes('raee')||n.includes('electron')?'FE-050':'FE-052');
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
-    return addDirectRecord({p:row.periodo,type:'waste',site:site.id,source:row.residuo,qty:row.cantidad,factor:fid,src:'excel',
-      detail:{'Corriente':row.residuo},doc:row.documento||'Carga Excel — residuos',sys:SYS.res,method:'kg tratados × factor por tipo de tratamiento'}); }},
+    if(row._fm&&!row._fm.factor) return {err:row._fm.error};
+    const fid=row.factor||(row._fm?row._fm.factor:'FE-052');
+    return addDirectRecord({p:row.periodo,type:'waste',site:site.id,source:row.residuo,qty:row.cantidad,factor:fid,src:'excel',fm:row._fm&&fmFrom(row._fm),
+      detail:{'Corriente':row.residuo},doc:row.documento||'Carga Excel — residuos',sys:SYS.res,method:'kg tratados × factor por tipo de tratamiento'}); },
+  match(row){ return row.factor?null:fmSpec(row.residuo,{scope:3,cat:5,unit:'kg'}); }},
  viajes:{label:'Viajes de negocios',ic:'plane',group:'periodica',desc:'Vuelos, traslados y hotelería asociados a viajes de trabajo (Cat. 6).',
   fields:[{k:'periodo',l:'Período (AAAA-MM)',req:1,syn:['periodo','fecha','mes']},{k:'planta',l:'Planta (opcional)',syn:['planta','site']},
    {k:'concepto',l:'Concepto',req:1,syn:['concepto','tipo','descripcion','tramo']},{k:'cantidad',l:'Cantidad',req:1,syn:['cantidad','km','noches','qty']},
@@ -4312,14 +4530,15 @@ const DATA_TYPES = {
   sample:[['2026-08','Planta Vicente López','Vuelo Buenos Aires → Neuquén','1150','FE-060','Reserva K449201','Buenos Aires','Neuquén','','','',''],['2026-08','Planta Vicente López','Vuelo a planta de cliente','7800','FE-060','Reserva K449377','Buenos Aires','Houston','-34.60','-58.38','29.76','-95.37'],['2026-08','Planta Vicente López','Hotelería','24','FE-062','Consolidado 08-2026','','','','','','']],
   apply(row){ if(!validPeriod(row.periodo)) return {err:'Período inválido (usá AAAA-MM).'};
     const site=findSiteLoose(row.planta);
-    const n=normTxt(row.concepto);
-    const fid=row.factor||(n.includes('hotel')||n.includes('noche')?'FE-062':n.includes('auto')?'FE-061':'FE-060');
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
-    const res=addDirectRecord({p:row.periodo,type:'travel',site:site?site.id:(SITES[0]?SITES[0].id:''),source:row.concepto,qty:row.cantidad,factor:fid,src:'excel',
+    if(row._fm&&!row._fm.factor) return {err:row._fm.error};
+    const fid=row.factor||(row._fm?row._fm.factor:'FE-060');
+    const res=addDirectRecord({p:row.periodo,type:'travel',site:site?site.id:(SITES[0]?SITES[0].id:''),source:row.concepto,qty:row.cantidad,factor:fid,src:'excel',fm:row._fm&&fmFrom(row._fm),
       doc:row.documento||'Carga Excel — viajes',sys:SYS.viajes,method:'Distancia o noches × factor'});
     const rt=travelRouteFromRow(row);
     if(res.ok&&rt) res.rec.route=rt;
-    return res; }},
+    return res; },
+  match(row){ return row.factor?null:fmSpec(row.concepto,{scope:3,cat:6}); }},
  commuting:{label:'Traslado de colaboradores',ic:'user',group:'periodica',desc:'Resultados de la encuesta de movilidad y jornadas remotas (Cat. 7).',
   fields:[{k:'periodo',l:'Período (AAAA-MM)',req:1,syn:['periodo','fecha','mes']},{k:'planta',l:'Planta',req:1,syn:['planta','site']},
    {k:'modo',l:'Modo',req:1,syn:['modo','medio','transporte','modalidad']},{k:'cantidad',l:'Cantidad (km o jornadas)',req:1,syn:['cantidad','km','jornadas','qty']},
@@ -4327,11 +4546,12 @@ const DATA_TYPES = {
   sample:[['2026-08','Planta Vicente López','auto particular','18600','50'],['2026-08','Planta Vicente López','home office','320','16']],
   apply(row){ if(!validPeriod(row.periodo)) return {err:'Período inválido (usá AAAA-MM).'};
     const site=findSiteLoose(row.planta); if(!site) return {err:'Planta no reconocida: «'+row.planta+'».'};
-    const n=normTxt(row.modo);
-    const fid=n.includes('home')||n.includes('remot')?(site.cc==='UY'?'FE-073':'FE-072'):n.includes('colectivo')||n.includes('publico')||n.includes('bus')?'FE-071':'FE-070';
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
-    return addDirectRecord({p:row.periodo,type:'commute',site:site.id,source:'Traslado casa-trabajo — '+row.modo+' · '+site.name,qty:row.cantidad,factor:fid,src:'survey',
-      detail:row.colaboradores?{'Colaboradores':row.colaboradores}:{},doc:'Encuesta de movilidad',sys:SYS.rrhh,method:'Extrapolación de la encuesta de movilidad'}); }},
+    if(row._fm&&!row._fm.factor) return {err:row._fm.error};
+    const fid=row._fm?row._fm.factor:'FE-070';
+    return addDirectRecord({p:row.periodo,type:'commute',site:site.id,source:'Traslado casa-trabajo — '+row.modo+' · '+site.name,qty:row.cantidad,factor:fid,src:'survey',fm:row._fm&&fmFrom(row._fm),
+      detail:row.colaboradores?{'Colaboradores':row.colaboradores}:{},doc:'Encuesta de movilidad',sys:SYS.rrhh,method:'Extrapolación de la encuesta de movilidad'}); },
+  match(row){ const site=findSiteLoose(row.planta); return fmSpec([row.modo,site&&site.country].filter(Boolean).join(' '),{scope:3,cat:7}); }},
  otras:{label:'Otras actividades de negocio',ic:'swap',group:'periodica',desc:'Cualquier otra actividad ya configurada: servicios, arrendamientos, activos de capital…',
   fields:[{k:'periodo',l:'Período (AAAA-MM)',req:1,syn:['periodo','fecha','mes']},{k:'actividad',l:'Actividad',req:1,syn:['actividad','concepto']},
    {k:'planta',l:'Planta (opcional)',syn:['planta','site']},{k:'cantidad',l:'Cantidad',req:1,syn:['cantidad','qty']},{k:'unidad',l:'Unidad',syn:['unidad','uom','unit']},
@@ -4342,7 +4562,9 @@ const DATA_TYPES = {
     const act=findBizLoose(row.actividad); if(!act) return {err:'Actividad no reconocida: «'+row.actividad+'».'};
     if(!(+row.cantidad>0)) return {err:'Cantidad inválida.'};
     const site=findSiteLoose(row.planta);
-    registerActivityRecord({period:row.periodo,activityId:act.id,siteId:site?site.id:'',qty:+row.cantidad,amount:+row.importe||null,currency:row.moneda,doc:row.documento,via:'importación Excel'}); return {ok:1}; }},
+    if(row._fm&&!row._fm.factor) return {err:row._fm.error};
+    registerActivityRecord({period:row.periodo,activityId:act.id,siteId:site?site.id:'',qty:+row.cantidad,amount:+row.importe||null,currency:row.moneda,doc:row.documento,via:'importación Excel',fm:row._fm&&fmFrom(row._fm)}); return {ok:1}; },
+  match(row){ const act=findBizLoose(row.actividad); return act?activityMatchSpec(act,null,row.actividad):null; }},
 };
 
 function detectDelim(text){ const line=(text.split(/\r?\n/)[0]||''); const c=(line.match(/,/g)||[]).length,s=(line.match(/;/g)||[]).length; return s>c?';':','; }
@@ -4427,17 +4649,30 @@ function dcWizToStep(n){
   }
   S.dc.wiz.step=n; render();
 }
-function dcWizImport(){
-  const type=S.dc.wiz.type, t=DATA_TYPES[type];
-  let ok=0,err=0;
-  S.dc.wiz.valid.forEach(item=>{ if(item.status==='err'){err++;return;}
+async function dcWizImport(){
+  const w=S.dc.wiz, type=w.type, t=DATA_TYPES[type];
+  if(w.importing) return;
+  let ok=0,err=0,auto=0,ties=0;
+  /* filas sin factor: el servidor busca el más parecido de la biblioteca antes de crear los registros */
+  if(t.match){
+    const todo=w.valid.filter(i=>i.status!=='err').map(i=>[i,t.match(i.row)]).filter(([,spec])=>spec);
+    if(todo.length){
+      w.importing=true; render();
+      try{ const res=await matchFactors(todo.map(([,spec])=>spec)); todo.forEach(([i],k)=>{ i.row._fm=res[k]; }); }
+      catch(e){ toast('No se pudieron buscar los factores por similitud: '+e.message+'. No se importó nada.','⚠'); return; }
+      finally{ w.importing=false; render(); }
+    }
+  }
+  w.valid.forEach(item=>{ if(item.status==='err'){err++;return;}
     const res=t.apply(item.row);
-    if(res&&res.err){ item.status='err'; item.msg=res.err; err++; } else { item.status='ok'; ok++; } });
+    if(res&&res.err){ item.status='err'; item.msg=res.err; err++; }
+    else { item.status='ok'; ok++; if(item.row._fm&&item.row._fm.factor){ auto++; if(item.row._fm.tie) ties++; } }
+    delete item.row._fm; });
   if(document.getElementById('dcSaveProfile')&&document.getElementById('dcSaveProfile').checked){
     try{ const saved=JSON.parse(window.carbonProfiles.get()||'{}'); saved[type]={header:S.dc.wiz.headers,mapping:S.dc.wiz.mapping}; window.carbonProfiles.set(JSON.stringify(saved)); }catch(e){}
   }
   logImport(t.label,S.dc.wiz.fileName?('Importación de «'+S.dc.wiz.fileName+'»'):'Importación', ok);
-  S.dc.wiz.step=5; S.dc.wiz.imported={ok,err}; render();
+  S.dc.wiz.step=5; S.dc.wiz.imported={ok,err,auto,ties}; render();
 }
 function dcWizDownloadErrors(){
   const rows=S.dc.wiz.valid.filter(i=>i.status==='err');
@@ -4514,7 +4749,7 @@ function dcWizardView(){
         <td class="tiny">${it.status==='err'?esc(it.msg):'Lista para importar'}</td></tr>`).join('')}
       </tbody></table></div></div></div>
       <div style="display:flex;gap:8px;margin-top:16px"><button class="btn" onclick="S.dc.wiz.step=3;render()">Volver al mapeo</button>
-      <button class="btn primary" ${okRows.length?'':'disabled'} onclick="dcWizImport()">Importar ${okRows.length} registro(s)</button>
+      <button class="btn primary" ${okRows.length&&!w.importing?'':'disabled'} onclick="dcWizImport()">${w.importing?'Asignando factores por similitud…':'Importar '+okRows.length+' registro(s)'}</button>
       <label class="flexrow tiny dim" style="margin-left:auto"><input type="checkbox" id="dcSaveProfile" checked style="margin:0"> Guardar esta configuración de mapeo para futuras importaciones</label></div>`;
   } else {
     const im=w.imported||{ok:0,err:0};
@@ -4522,9 +4757,11 @@ function dcWizardView(){
       <div class="empty-ico" style="width:52px;height:52px;border-radius:14px;background:var(--ok-soft);color:var(--ok);display:flex;align-items:center;justify-content:center;margin:0 auto 14px">${ico('check',2)}</div>
       <div style="font-size:20px;font-weight:600">Importación completa</div>
       <p class="dim" style="max-width:52ch;margin:8px auto 22px"><b>${nf(im.ok)}</b> registros importados${im.err?', <b>'+nf(im.err)+'</b> rechazados por errores':''}. Los datos ya están sumados al inventario del período correspondiente — no se perdió ningún dato de demostración.</p>
+      ${im.auto?`<div class="note" style="max-width:60ch;margin:0 auto 18px;text-align:left"><b>${nf(im.auto)}</b> registros recibieron el factor de la biblioteca más parecido a su descripción${im.ties?`, <b style="color:var(--bad)">${nf(im.ties)} con empate</b>`:''}. Quedan pendientes de aprobación.</div>`:''}
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        ${im.auto?`<button class="btn primary" onclick="go('asignacion')">Revisar y aprobar factores</button>`:''}
         <button class="btn" onclick="dcWizPickStep()">Cargar otro archivo</button>
-        <button class="btn primary" onclick="dcGo('${DATA_TYPES[w.type].group==='config'?'config':'periodica'}')">Volver al Centro de Datos</button>
+        <button class="btn ${im.auto?'':'primary'}" onclick="dcGo('${DATA_TYPES[w.type].group==='config'?'config':'periodica'}')">Volver al Centro de Datos</button>
         <button class="btn ghost" onclick="go('dash')">Ver el panel ejecutivo</button>
       </div></div></div>`;
   }
