@@ -2,7 +2,9 @@
 import json
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -13,6 +15,15 @@ class Session:
     def execute(self, sql, args=()):
         return self.conn.execute(sql.replace('?', '%s') if self.postgres else sql, args)
 
+    def executemany(self, sql, rows):
+        if not rows:
+            return
+        if self.postgres:
+            with self.conn.cursor() as cursor:
+                cursor.executemany(sql.replace('?', '%s'), rows)
+        else:
+            self.conn.executemany(sql, rows)
+
     def json(self, value):
         if self.postgres:
             from psycopg.types.json import Jsonb
@@ -22,6 +33,11 @@ class Session:
 
 def decode(value):
     return json.loads(value) if isinstance(value, str) else value
+
+
+def event(s, user, action, revision, details):
+    s.execute('INSERT INTO carbon_events VALUES (?,?,?,?,?,?)',
+              (str(uuid.uuid4()), user, action, revision, datetime.now(timezone.utc).isoformat(), s.json(details)))
 
 
 @contextmanager
@@ -70,6 +86,8 @@ def initialize():
             f'CREATE TABLE IF NOT EXISTS carbon_records (account TEXT NOT NULL REFERENCES carbon_accounts(id), id TEXT NOT NULL, period TEXT NOT NULL, site TEXT NOT NULL, scope INTEGER NOT NULL CHECK(scope IN (1,2,3)), factor TEXT NOT NULL, quantity DOUBLE PRECISION NOT NULL, kg DOUBLE PRECISION NOT NULL, body {j} NOT NULL, PRIMARY KEY(account,id))',
             f'CREATE TABLE IF NOT EXISTS carbon_events (id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id), action TEXT NOT NULL, revision INTEGER NOT NULL, created TEXT NOT NULL, details {j} NOT NULL)',
             'CREATE TABLE IF NOT EXISTS carbon_api_tokens (id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, label TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, created TEXT NOT NULL, last_used TEXT)',
+            f'CREATE TABLE IF NOT EXISTS carbon_state_backups (account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, created TEXT NOT NULL, revision INTEGER NOT NULL, body {j} NOT NULL)',
+            f'CREATE TABLE IF NOT EXISTS carbon_uploads (account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, batch TEXT NOT NULL, part INTEGER NOT NULL, created DOUBLE PRECISION NOT NULL, body {j} NOT NULL, PRIMARY KEY(account,batch,part))',
             'CREATE INDEX IF NOT EXISTS carbon_records_filter ON carbon_records(account,period,site,scope)',
             'CREATE INDEX IF NOT EXISTS carbon_api_tokens_account ON carbon_api_tokens(account)',
             'CREATE INDEX IF NOT EXISTS carbon_sessions_expiry ON carbon_sessions(expires)',
@@ -81,6 +99,9 @@ def initialize():
         _ensure_column(s, 'carbon_accounts', 'active', 'active BOOLEAN NOT NULL DEFAULT TRUE')
         _ensure_column(s, 'carbon_accounts', 'created', "created TEXT NOT NULL DEFAULT ''")
         _ensure_column(s, 'carbon_sessions', 'impersonated_by', 'impersonated_by TEXT')
+        # Row order inside the inventory: records and movements are stored as rows, not inside the state body.
+        _ensure_column(s, 'carbon_records', 'seq', 'seq INTEGER')
+        _ensure_column(s, 'carbon_entities', 'seq', 'seq INTEGER')
 
 
 def _column_exists(s, table, column):

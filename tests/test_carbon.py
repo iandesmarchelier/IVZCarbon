@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 from backend.app import app, bootstrap_account
 from backend.manage import create_user
 from backend.metrics import compute, normalize
-from backend.storage import db, database_url
+from backend.storage import db, database_url, decode
 from backend.security import hash_password, verify_password
 
 SEED = json.loads((ROOT/'seed.json').read_text(encoding='utf8'))
@@ -140,6 +140,106 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(anon.get('/api/summary').status_code, 401)
             self.client.delete('/api/tokens/' + listed[0]['id'], headers=self.h)
             self.assertEqual(anon.get('/api/summary', headers=auth).status_code, 401)
+
+    def diff(self,before,after):
+        """What the screen sends: catalogue if changed, changed/removed rows, explicit order only if it moved."""
+        body={'revision':before['revision']}
+        cat=lambda st:{k:v for k,v in st.items() if k not in ('REC','MOV')}
+        if cat(before['state'])!=cat(after):body['catalogue']=cat(after)
+        body['changes'],body['order']={},{}
+        for kind,key in (('REC','rid'),('MOV','id')):
+            old={x[key]:x for x in before['state'][kind]};ids=[x[key] for x in after[kind]];keep=set(ids)
+            upsert=[x for x in after[kind] if old.get(x[key])!=x];delete=[k for k in old if k not in keep]
+            if upsert or delete:body['changes'][kind]={'upsert':upsert,'delete':delete}
+            expected=[k for k in old if k in keep]+[k for k in ids if k not in old]
+            if ids!=expected:body['order'][kind]=ids
+        return body
+
+    def paged(self):
+        cat=self.client.get('/api/state/catalogue').json();state=dict(cat['state'])
+        for kind in ('REC','MOV'):
+            state[kind]=[]
+            for offset in range(0,cat['counts'][kind],700):
+                page=self.client.get(f'/api/state/rows?kind={kind}&offset={offset}&limit=700').json()
+                self.assertEqual(page['revision'],cat['revision']);state[kind]+=page['items']
+        return {'revision':cat['revision'],'state':state}
+
+    def test_saving_changes_matches_saving_everything(self):
+        self.login();current=self.initialize()
+        self.assertEqual(self.paged(),{'revision':current['revision'],'state':current['state']})
+        def edit(s):s['REC'][5]['qty']=123.0;s['REC'][40]['qty']=0.0
+        def delete(s):
+            gone={r['rid'] for r in s['REC'][10:20]}
+            s['REC'][:]=[r for i,r in enumerate(s['REC']) if not 10<=i<20]
+            for r in s['REC']:
+                if r.get('pair') in gone:r.pop('pair')
+            s['MOV'].pop(3)
+        def add(s):
+            r=copy.deepcopy(s['REC'][0]);r.update(rid='R99001',qty=7.5);r.pop('pair',None);s['REC'].append(r)
+            m=copy.deepcopy(s['MOV'][0]);m['id']='MOV-TEST-1';s['MOV'].append(m)
+        def factor(s):s['FACTORS'][0]['v']*=2  # every record using it gets a new kg on the server
+        def reorder(s):s['REC'].reverse()
+        def insert_middle(s):
+            r=copy.deepcopy(s['REC'][1]);r.update(rid='R99002',qty=1.0);r.pop('pair',None);s['REC'].insert(3,r)
+        for step in (edit,delete,add,factor,reorder,insert_middle):
+            with self.subTest(step=step.__name__):
+                after=copy.deepcopy(current['state']);step(after)
+                r=self.client.post('/api/state/changes',headers=self.h,json=self.diff(current,after))
+                self.assertEqual(r.status_code,200,r.text)
+                expected=normalize(after)
+                self.assertEqual(r.json()['summary'],json.loads(json.dumps(compute(expected))))
+                current=self.client.get('/api/state').json()
+                self.assertEqual(current['state'],expected)
+                self.assertEqual(self.paged(),{'revision':current['revision'],'state':current['state']})
+        factor0=current['state']['FACTORS'][0]
+        with db() as s:  # the queryable copy follows the factor change
+            rows=s.execute("SELECT kg,quantity FROM carbon_records WHERE factor=? AND account=(SELECT id FROM carbon_accounts WHERE username='one')",(factor0['id'],)).fetchall()
+        self.assertTrue(rows and all(abs(r['kg']-r['quantity']*factor0['v'])<1e-6 for r in rows))
+
+    def test_changes_are_atomic_and_checked(self):
+        self.login();current=self.initialize();revision=current['revision']
+        bad=copy.deepcopy(current['state']);bad['REC'][0]['factor']='NOPE'
+        self.assertEqual(self.client.post('/api/state/changes',headers=self.h,json=self.diff(current,bad)).status_code,422)
+        stale=copy.deepcopy(current['state']);stale['REC'][0]['qty']=1.0
+        body=self.diff(current,stale);body['revision']=revision-1
+        self.assertEqual(self.client.post('/api/state/changes',headers=self.h,json=body).status_code,409)
+        self.assertEqual(self.client.post('/api/state/changes',headers=self.h,json={'revision':revision,'changes':{'REC':{'upsert':[{'qty':1}]}}}).status_code,422)
+        self.assertEqual(self.client.get('/api/state').json(),current)
+        # A large change arrives in staged parts; a missing part rejects the whole save.
+        big=copy.deepcopy(current['state'])
+        for r in big['REC']:r['qty']=r['qty']+1
+        body=self.diff(current,big);upsert=body['changes']['REC'].pop('upsert')
+        chunks=[upsert[i:i+1000] for i in range(0,len(upsert),1000)]
+        for i,chunk in enumerate(chunks):
+            r=self.client.post('/api/state/upload',headers=self.h,json={'batch':'batch-0001','part':i,'changes':{'REC':{'upsert':chunk}}})
+            self.assertEqual(r.status_code,200,r.text)
+        body['changes']['REC']['upsert']=[];body.update(batch='batch-0001',parts=len(chunks)+1)
+        self.assertEqual(self.client.post('/api/state/changes',headers=self.h,json=body).status_code,409)
+        self.assertEqual(self.client.get('/api/state').json(),current)
+        for i,chunk in enumerate(chunks):
+            self.client.post('/api/state/upload',headers=self.h,json={'batch':'batch-0002','part':i,'changes':{'REC':{'upsert':chunk}}})
+        body.update(batch='batch-0002',parts=len(chunks))
+        r=self.client.post('/api/state/changes',headers=self.h,json=body)
+        self.assertEqual(r.status_code,200,r.text)
+        self.assertEqual(self.client.get('/api/state').json()['state'],normalize(big))
+        self.login('two')
+        self.assertIsNone(self.client.get('/api/state/catalogue').json()['state'])
+        self.assertEqual(self.client.get('/api/state/rows?kind=REC').status_code,404)
+
+    def test_single_body_inventories_are_moved_to_rows_once(self):
+        self.login();current=self.initialize()
+        with db() as s:  # write the inventory in the pre-split format, as production has it
+            user=s.execute("SELECT id FROM carbon_accounts WHERE username='one'").fetchone()['id']
+            s.execute('UPDATE carbon_states SET body=? WHERE account=?',(json.dumps(current['state']),user))
+            s.execute('UPDATE carbon_records SET seq=NULL WHERE account=?',(user,))
+            s.execute("DELETE FROM carbon_entities WHERE account=? AND kind='MOV'",(user,))
+        self.assertEqual(self.paged(),{'revision':current['revision'],'state':current['state']})
+        self.assertEqual(self.client.get('/api/state').json(),current)
+        with db() as s:
+            body=decode(s.execute('SELECT body FROM carbon_states WHERE account=?',(user,)).fetchone()['body'])
+            backups=s.execute('SELECT body FROM carbon_state_backups WHERE account=?',(user,)).fetchall()
+        self.assertNotIn('REC',body)
+        self.assertEqual([decode(b['body']) for b in backups],[current['state']])
 
     def test_vercel_database_configuration(self):
         with patch.dict(os.environ, {'VERCEL':'1','DATABASE_URL':'postgresql://integration-test'}):

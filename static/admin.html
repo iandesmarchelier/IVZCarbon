@@ -57,7 +57,7 @@ dialog::backdrop{background:#0004}
   <div class="card">
     <div class="card-h"><h2>Cuentas</h2><span class="sub" id="count"></span></div>
     <div class="card-b" style="padding:0;overflow-x:auto">
-      <table style="min-width:640px"><thead><tr><th>Usuario</th><th>Empresa</th><th>Rol</th><th>Estado</th><th>Última actividad</th><th></th></tr></thead>
+      <table style="min-width:720px"><thead><tr><th>Usuario</th><th>Empresa</th><th>Rol</th><th>Estado</th><th>Última actividad</th><th>Registros</th><th></th></tr></thead>
         <tbody id="rows"></tbody></table>
     </div>
   </div>
@@ -91,12 +91,13 @@ async function loadAccounts(){
       <td><span class="pill ${r.role}">${r.role==='admin'?'Admin':'Cliente'}</span></td>
       <td>${r.active?'Activa':'<span class=\"pill inactive\">Desactivada</span>'}</td>
       <td>${esc((r.updated||r.created||'').slice(0,10)||'—')}</td>
+      <td>${Number(r.records||0).toLocaleString('es')}</td>
       <td><div class="row-actions">
         ${r.role!=='admin'?`<button data-act="login" data-id="${r.id}" data-name="${esc(r.company)}">Entrar como</button>`:''}
         <button data-act="reset" data-id="${r.id}" data-user="${esc(r.username)}">Resetear contraseña</button>
         <button class="${r.active?'danger':''}" data-act="toggle" data-id="${r.id}" data-active="${r.active?1:0}">${r.active?'Desactivar':'Reactivar'}</button>
       </div></td>
-    </tr>`).join(''):'<tr><td colspan="6" class="empty">Todavía no hay cuentas de clientes.</td></tr>';
+    </tr>`).join(''):'<tr><td colspan="7" class="empty">Todavía no hay cuentas de clientes.</td></tr>';
 }
 document.getElementById('rows').addEventListener('click',async e=>{
   const b=e.target.closest('button[data-act]'); if(!b) return;

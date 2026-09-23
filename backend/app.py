@@ -15,9 +15,10 @@ from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from .invoice_parser import parse_document
-from .metrics import normalize, compute
+from . import inventory
+from .metrics import compute
 from .security import hash_password, verify_password, token_hash
-from .storage import db, initialize, decode, database_url
+from .storage import db, initialize, decode, database_url, event
 
 ROOT = Path(__file__).resolve().parent.parent
 DUMMY = hash_password('not-a-real-account')
@@ -83,11 +84,6 @@ def account_flexible(request):
     return account_by_token(request) or account(request)
 
 
-def event(s, user, action, revision, details):
-    s.execute('INSERT INTO carbon_events VALUES (?,?,?,?,?,?)',
-              (str(uuid.uuid4()), user, action, revision, datetime.now(timezone.utc).isoformat(), s.json(details)))
-
-
 def bootstrap_account():
     """Provision the initial accounts from secret hashes; never reset an existing user."""
     now = datetime.now(timezone.utc).isoformat()
@@ -150,17 +146,46 @@ def me(request: Request):
             'role': user['role'], 'impersonating': bool(user.get('impersonated_by'))}
 
 
-def load(user):
-    with db() as s:
-        row = s.execute('SELECT revision,body,updated FROM carbon_states WHERE account=?', (user,)).fetchone()
-    if not row:
-        return {'revision': 0, 'state': None, 'updated': None}
-    return {'revision': row['revision'], 'state': decode(row['body']), 'updated': row['updated']}
-
-
 @app.get('/api/state')
 def get_state(request: Request):
-    return load(account(request)['id'])
+    """The whole inventory in one response. The screen uses the paged endpoints below instead."""
+    return inventory.load(account(request)['id'])
+
+
+@app.get('/api/state/catalogue')
+def get_catalogue(request: Request):
+    return inventory.load_catalogue(account(request)['id'])
+
+
+@app.get('/api/state/rows')
+def get_rows(request: Request, kind: Literal['REC', 'MOV'], offset: int = 0, limit: int = 2000):
+    return inventory.load_page(account(request)['id'], kind, offset, limit)
+
+
+class Upload(BaseModel):
+    batch: str = Field(min_length=8, max_length=64)
+    part: int = Field(ge=0, le=10000)
+    changes: dict
+
+
+@app.post('/api/state/upload')
+def upload_changes(body: Upload, request: Request):
+    return inventory.upload(account(request)['id'], body.batch, body.part, body.changes)
+
+
+class ChangeSet(BaseModel):
+    revision: int = Field(ge=0)
+    catalogue: dict | None = None
+    changes: dict = {}
+    order: dict = {}
+    batch: str | None = Field(default=None, min_length=8, max_length=64)
+    parts: int = Field(default=0, ge=0, le=10000)
+
+
+@app.post('/api/state/changes')
+def save_changes(body: ChangeSet, request: Request):
+    return inventory.save(account(request)['id'], body.revision, catalogue=body.catalogue, changes=body.changes,
+                          order=body.order, batch=body.batch, parts=body.parts)
 
 
 class Save(BaseModel):
@@ -168,52 +193,9 @@ class Save(BaseModel):
     state: dict
 
 
-def save(user, revision, raw, action='save'):
-    try:
-        state = normalize(raw)
-        summary = compute(state)
-    except (ValueError, TypeError, KeyError, AttributeError) as exc:
-        raise HTTPException(422, str(exc)) from exc
-    updated = datetime.now(timezone.utc).isoformat()
-    with db() as s:
-        if revision == 0:
-            result = s.execute('INSERT INTO carbon_states VALUES (?,1,?,?) ON CONFLICT(account) DO NOTHING RETURNING revision',
-                               (user, s.json(state), updated)).fetchone()
-        else:
-            result = s.execute('UPDATE carbon_states SET revision=revision+1,body=?,updated=? WHERE account=? AND revision=? RETURNING revision',
-                               (s.json(state), updated, user, revision)).fetchone()
-        if not result:
-            raise HTTPException(409, 'Otra pestaña guardó cambios. Descargá tus cambios y recargá antes de continuar.')
-        s.execute('DELETE FROM carbon_entities WHERE account=?', (user,))
-        for kind in ('FACTORS', 'SITES', 'PROCS', 'LINES', 'MACH', 'BIZ', 'WASTECAT', 'MOV', 'RULES'):
-            rows = [(user, kind, row['id'], s.json(row)) for row in state[kind]]
-            sql = 'INSERT INTO carbon_entities VALUES (?,?,?,?)'
-            with s.conn.cursor() if s.postgres else _cursor(s.conn) as cursor:
-                cursor.executemany(sql.replace('?', '%s') if s.postgres else sql, rows)
-        s.execute('DELETE FROM carbon_records WHERE account=?', (user,))
-        rows = [(user, r['rid'], r['p'], r['site'], r['scope'], r['factor'], r['qty'], r['kg'], s.json(r)) for r in state['REC']]
-        sql = 'INSERT INTO carbon_records VALUES (?,?,?,?,?,?,?,?,?)'
-        with s.conn.cursor() if s.postgres else _cursor(s.conn) as cursor:
-            cursor.executemany(sql.replace('?', '%s') if s.postgres else sql, rows)
-        event(s, user, action, result['revision'], {'records': len(rows), 'kg': summary['kg']})
-    return {'revision': result['revision'], 'updated': updated, 'summary': summary}
-
-
-from contextlib import contextmanager
-
-
-@contextmanager
-def _cursor(conn):
-    cursor = conn.cursor()
-    try:
-        yield cursor
-    finally:
-        cursor.close()
-
-
 @app.put('/api/state')
 def put_state(body: Save, request: Request):
-    return save(account(request)['id'], body.revision, body.state)
+    return inventory.save(account(request)['id'], body.revision, full=body.state)
 
 
 class Start(BaseModel):
@@ -229,13 +211,13 @@ def start(body: Start, request: Request):
             state[k] = []
         state['PLACES'] = {}
         state['PERIODS'] = [datetime.now(timezone.utc).strftime('%Y-%m')]
-    save(user, 0, state, 'initialize_'+body.mode)
-    return load(user)
+    inventory.save(user, 0, 'initialize_'+body.mode, full=state)
+    return inventory.load(user)
 
 
 @app.get('/api/summary')
 def summary(request: Request, year: int | None = None, site: str | None = None):
-    state = load(account_flexible(request)['id'])['state']
+    state = inventory.load(account_flexible(request)['id'])['state']
     if not state:
         raise HTTPException(404, 'Inicializá el inventario.')
     return compute(state, year, site)
@@ -273,7 +255,7 @@ def revoke_token(token_id: str, request: Request):
 
 @app.get('/api/link/sites')
 def link_sites(request: Request):
-    state = load(account_flexible(request)['id'])['state']
+    state = inventory.load(account_flexible(request)['id'])['state']
     if not state:
         return []
     return [{'id': s['id'], 'name': s['name'], 'country': s.get('country', ''), 'cc': s.get('cc', '')} for s in state['SITES']]
@@ -281,7 +263,7 @@ def link_sites(request: Request):
 
 @app.get('/api/link/periods')
 def link_periods(request: Request):
-    state = load(account_flexible(request)['id'])['state']
+    state = inventory.load(account_flexible(request)['id'])['state']
     return (state or {}).get('PERIODS', [])
 
 
@@ -311,13 +293,13 @@ def audit(request: Request):
 
 @app.get('/api/export')
 def export(request: Request):
-    state = load(account(request)['id'])
+    state = inventory.load(account(request)['id'])
     return Response(json.dumps(state, ensure_ascii=False), media_type='application/json', headers={'Content-Disposition': 'attachment; filename="ivz-carbon-backup.json"'})
 
 
 @app.get('/api/inventory.csv')
-def inventory(request: Request):
-    state = load(account(request)['id'])['state']
+def inventory_csv(request: Request):
+    state = inventory.load(account(request)['id'])['state']
     out = io.StringIO(newline='')
     writer = csv.writer(out)
     fields = ['rid', 'p', 'site', 'scope', 'cat', 'factor', 'qty', 'unit', 'kg', 'bio', 'source']
@@ -339,7 +321,8 @@ async def parse_document_endpoint(request: Request, kind: Literal['elec', 'gas',
 def admin_list_accounts(request: Request):
     require_admin(request)
     with db() as s:
-        rows = s.execute('SELECT a.id,a.username,a.company,a.role,a.active,a.created,st.updated FROM carbon_accounts a '
+        rows = s.execute('SELECT a.id,a.username,a.company,a.role,a.active,a.created,st.updated,'
+                         '(SELECT COUNT(*) FROM carbon_records r WHERE r.account=a.id) AS records FROM carbon_accounts a '
                          'LEFT JOIN carbon_states st ON st.account=a.id ORDER BY a.created DESC, a.username').fetchall()
     return [dict(r) for r in rows]
 
