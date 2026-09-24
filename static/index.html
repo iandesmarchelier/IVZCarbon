@@ -767,6 +767,32 @@ table.invtbl tr.scoperow>td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
 .catcard .cc-foot a:hover{text-decoration:underline}
 .cc-v.zero{color:var(--muted-2)}
 .catcard.off{opacity:.85}
+/* flujo de alcances hacia el inventario (Resumen del inventario corporativo) */
+.sankey{display:grid;grid-template-columns:minmax(120px,190px) minmax(0,1fr) minmax(180px,270px);gap:0 22px;align-items:center;padding:22px 4px}
+.sk-labs,.sk-flow{position:relative;height:300px}
+.sk-lab{position:absolute;left:0;right:0;transform:translateY(-50%);cursor:pointer}
+.sk-lab b{display:block;font-size:16px;font-weight:600;color:var(--ink)}
+.sk-lab .num{font-size:13px;color:var(--muted)}
+.sk-lab .tiny{display:block;margin-top:1px}
+.sk-lab:hover b{color:var(--accent)}
+.sk-flow svg{position:absolute;top:0;left:9px;width:calc(100% - 21px);height:100%;overflow:visible}
+.sk-rib{opacity:.58;cursor:pointer;transition:opacity .15s;animation:skIn .6s ease both}
+.sk-rib:hover{opacity:.8}
+@keyframes skIn{from{opacity:0}to{opacity:.58}}
+.sk-node{position:absolute;width:9px;border-radius:3px}
+.sk-node.src{left:0}
+.sk-node.dst{right:0;background:var(--nav-2);width:12px}
+.sk-tot .sk-t{font-size:15px;color:var(--ink)}
+.sk-tot .sk-v{font-size:34px;font-weight:600;color:var(--ink);letter-spacing:-.02em;line-height:1.15;margin:4px 0 6px}
+.sk-tot .sk-v small{font-size:22px;font-weight:600}
+@media (max-width:700px){
+  .sankey{grid-template-columns:104px minmax(0,1fr);gap:14px 12px}
+  .sk-labs,.sk-flow{height:280px}
+  .sk-lab b{font-size:14px}
+  .sk-mb{display:none}
+  .sk-tot{grid-column:1/-1}
+  .sk-tot .sk-v{font-size:28px}
+}
 /* las columnas del grid no deben crecer con el contenido de una tabla ancha
    (solo por encima del breakpoint del original, que las apila en una sola) */
 @media (min-width:1151px){
@@ -2020,6 +2046,35 @@ V.corporativo=(f,arg)=>{
   if(tab==='res') return hd+invResumen(f,rs,sc,tot);
   return hd+invScope(f,+tab,rs,tot);
 };
+/* flujo de los tres alcances hacia el total del inventario. Las alturas son
+   porcentajes del alto del panel: el SVG (viewBox 100×100, sin mantener
+   proporción) dibuja las cintas y las etiquetas HTML usan los mismos top%. */
+function invFlow(f,sc,tot){
+  const card=b=>`<div class="card" data-tour="inv-flow"><div class="card-h"><h3>El aporte de cada alcance</h3><div class="sub">flujo hacia el inventario · tCO₂e</div></div><div class="card-b">${b}</div></div>`;
+  if(!(tot>0)) return card('<div class="empty"><div class="big">Sin emisiones en el período</div></div>');
+  /* AV: alto total de las cintas; G: separación mínima entre nodos; D: distancia
+     mínima entre centros para que las etiquetas no se pisen (alcances chicos) */
+  const AV=54, G=11, D=30, col={1:C.s1,2:C.s2,3:C.s3};
+  const th={}; [1,2,3].forEach(s=>th[s]=(sc[s]||0)>0?Math.max(1.6,sc[s]/tot*AV):0);
+  const sumTh=th[1]+th[2]+th[3];
+  const gap=[Math.max(G,D-(th[1]+th[2])/2),Math.max(G,D-(th[2]+th[3])/2)];
+  let y=(100-sumTh-gap[0]-gap[1])/2, r=(100-sumTh)/2;
+  const rStart=r, L={}, R={};
+  [1,2,3].forEach(s=>{L[s]=y;R[s]=r;y+=th[s]+(gap[s-1]||0);r+=th[s]});
+  const ribs=[1,2,3].filter(s=>th[s]).map((s,i)=>{
+    const a=L[s],b=R[s],h=th[s];
+    const tip=`<div class="tt-h">Alcance ${s} → Inventario</div><div class="tt-row"><span class="tt-dot" style="background:${col[s]}"></span><span class="tt-lab">Emisiones</span><span class="tt-val">${autoKg(sc[s])}</span></div><div class="tt-row"><span class="tt-lab" style="padding-left:14px">Participación</span><span class="tt-val">${nf(pct(sc[s],tot),1)}%</span></div>`;
+    return `<path class="sk-rib" style="animation-delay:${i*90}ms" fill="${col[s]}" d="M0 ${a}C50 ${a} 50 ${b} 100 ${b}L100 ${b+h}C50 ${b+h} 50 ${a+h} 0 ${a+h}Z" onclick="go('corporativo','${s}')" data-tip='${qesc(tip)}' onmouseenter="tipShow(event)" onmousemove="tipMove(event)" onmouseleave="tipHide()"/>`;
+  }).join('');
+  const nodes=[1,2,3].map(s=>`<div class="sk-node src" style="top:${L[s]}%;height:max(${th[s]}%,3px);background:${col[s]}"></div>`).join('')
+    +`<div class="sk-node dst" style="top:${rStart}%;height:${sumTh}%"></div>`;
+  const labs=[1,2,3].map(s=>`<div class="sk-lab" style="top:${L[s]+th[s]/2}%" onclick="go('corporativo','${s}')"><b>Alcance ${s}</b><span class="num">${t(sc[s]||0,1)} tCO₂e</span><span class="tiny dim">${nf(pct(sc[s],tot),1)}% del total${s===2?'<span class="sk-mb"> · market-based</span>':''}</span></div>`).join('');
+  return card(`<div class="sankey">
+    <div class="sk-labs">${labs}</div>
+    <div class="sk-flow"><svg viewBox="0 0 100 100" preserveAspectRatio="none">${ribs}</svg>${nodes}</div>
+    <div class="sk-tot"><div class="sk-t">Inventario corporativo</div><div class="num sk-v">${t(tot,1)} <small>tCO₂e</small></div><div class="dim">${perimLabel(f)}</div></div>
+  </div>`);
+}
 function invResumen(f,rs,sc,tot){
   const ck=byCatKey(rs), cnt={}; rs.forEach(r=>{const k=catKey(r);cnt[k]=(cnt[k]||0)+1});
   const locS2=sum(rs.filter(r=>r.scope===2),locKg);
@@ -2035,7 +2090,7 @@ function invResumen(f,rs,sc,tot){
   const months=periodsIn(f).length||1;
   const rev=(f.site==='all'?SITES:[SBI[f.site]]).filter(Boolean).reduce((a,s)=>a+(s.rev||0),0)*months/12;
   const area=(f.site==='all'?SITES:[SBI[f.site]]).filter(Boolean).reduce((a,s)=>a+(s.area||0),0);
-  return `<div class="grid g23">
+  return invFlow(f,sc,tot)+`<div class="grid g23 mt">
     <div class="card" data-tour="corp-a3-table"><div class="card-h"><h3>Inventario consolidado</h3><div class="sub">tCO₂e · ${perimLabel(f)}</div></div><div class="card-b tight">
       <div class="tblwrap" style="max-height:none"><table class="invtbl"><thead><tr><th>Alcance / categoría</th><th class="r">tCO₂e</th><th class="r">%</th><th class="r">Registros</th><th>Estado</th></tr></thead><tbody>
       ${row(1)}${CATKEYS[1].map(subrow).join('')}
