@@ -100,6 +100,8 @@ def initialize():
         _ensure_column(s, 'carbon_accounts', 'role', "role TEXT NOT NULL DEFAULT 'client'")
         _ensure_column(s, 'carbon_accounts', 'active', 'active BOOLEAN NOT NULL DEFAULT TRUE')
         _ensure_column(s, 'carbon_accounts', 'created', "created TEXT NOT NULL DEFAULT ''")
+        # Sections and integrations an administrator switched on or off for the account (backend/features.py).
+        _ensure_column(s, 'carbon_accounts', 'settings', "settings TEXT NOT NULL DEFAULT '{}'")
         _ensure_column(s, 'carbon_sessions', 'impersonated_by', 'impersonated_by TEXT')
         # Row order inside the inventory: records and movements are stored as rows, not inside the state body.
         _ensure_column(s, 'carbon_records', 'seq', 'seq INTEGER')

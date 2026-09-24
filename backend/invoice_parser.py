@@ -199,7 +199,7 @@ def parse_waste_manifest(text):
     if m:
         fields['operator'] = re.sub(r'\s+', ' ', m.group(1)).strip(' .,-')[:60]; confidence['operator'] = 'low'
 
-    m = _search(r'\bmanifiesto\b[^\d\n]{0,20}(\d{3,10})', flat)
+    m = _search(r'\bmanifiesto\b[^\d\n]{0,45}(\d{3,10})', flat)
     if m:
         fields['doc'] = m.group(1); confidence['doc'] = 'low'
 
@@ -216,27 +216,76 @@ def parse_waste_manifest(text):
 
 PARSERS = {'elec': parse_electricity, 'gas': parse_gas, 'waste': parse_waste_manifest}
 
+# Words that point to each kind of document, for the bulk upload (kind 'auto').
+KIND_WORDS = {
+    'elec': [r'\bkwh\b', r'energ[ií]a el[eé]ctrica', r'edenor', r'edesur', r'\bute\b', r'\bepec\b', r'edelap', r'\bedea\b',
+             r'\bedes\b', r'\bedet\b', r'\beden\b', r'\bepe\b', r'potencia contratada', r'energ[ií]a activa'],
+    'gas': [r'\bm3\b', r'm³', r'metrogas', r'naturgy', r'camuzzi', r'litoral gas', r'ecogas', r'gasnor', r'gasnea',
+            r'montevideo gas', r'gas natural', r'kcal'],
+    'waste': [r'manifiesto', r'residuos?', r'generador', r'transportista', r'operador', r'tratamiento', r'disposici[oó]n final'],
+}
+
+
+def detect_kind(text):
+    """'elec', 'gas' or 'waste' for the document's text, or None when nothing points to any of them."""
+    low = re.sub(r'\s+', ' ', text).lower()
+    scores = {kind: sum(len(re.findall(w, low)) for w in words) for kind, words in KIND_WORDS.items()}
+    # A waste manifest names itself; an energy bill does not mention "manifiesto".
+    if re.search(r'manifiesto', low):
+        scores['waste'] += 10
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else None
+
+
+ACCOUNT_LABEL = (r'(?:n[°ºo]\.?\s*(?:de\s+)?)?(?:cliente|cuenta(?:\s+contrato)?|suministro|nis|medidor|contrato|'
+                 r'instalaci[oó]n|punto de suministro|generador)')
+
+
+def location_hints(text):
+    """What can tell which site a document belongs to: supply/account numbers, addresses and the text itself."""
+    flat = re.sub(r'\s+', ' ', text)
+    numbers = []
+    for m in re.finditer(ACCOUNT_LABEL + r'\s*(?:n[°ºo]\.?)?\s*[:#]?\s*([A-Z]{0,3}[\s-]?\d[\d\s./-]{3,22}\d)', flat, re.IGNORECASE):
+        value = re.sub(r'\s+', '', m.group(1)).strip('.-/')
+        if len(re.sub(r'\D', '', value)) >= 4 and value not in numbers:
+            numbers.append(value)
+    addresses = []
+    for m in re.finditer(r'(?:domicilio|direcci[oó]n)(?:\s+(?:de\s+suministro|del\s+suministro|postal|del\s+servicio|de\s+retiro|del\s+generador))?\s*:?\s*([^\n]{6,90})', text, re.IGNORECASE):
+        value = re.sub(r'\s+', ' ', m.group(1)).strip(' .,:-')
+        if value and value not in addresses:
+            addresses.append(value)
+    return {'accounts': numbers[:8], 'addresses': addresses[:4], 'text': flat[:6000]}
+
 
 def parse_document(data, filename, kind):
-    if kind not in PARSERS:
+    if kind not in PARSERS and kind != 'auto':
         raise ValueError('kind inválido')
 
     text, method = extract_text(data, filename)
+    detected = kind if kind != 'auto' else None
 
     if method == 'ocr-unavailable':
-        return {'ok': False, 'method': method,
-                'message': 'Este servidor no tiene instalado el motor de OCR (Tesseract), así que no se pudo leer automáticamente. Completá los datos a mano.',
-                'fields': {}, 'confidence': {}}
+        return {'ok': False, 'method': method, 'kind': detected,
+                'message': 'El documento no tiene texto (es una imagen o un escaneo) y este servidor no tiene OCR: completá los datos a mano.',
+                'fields': {}, 'confidence': {}, 'hints': {}}
     if not text.strip():
-        return {'ok': False, 'method': method or 'vacio',
+        return {'ok': False, 'method': method or 'vacio', 'kind': detected,
                 'message': 'No se pudo extraer texto del archivo. Probá con otra foto o completá los datos a mano.',
-                'fields': {}, 'confidence': {}}
+                'fields': {}, 'confidence': {}, 'hints': {}}
 
-    fields, confidence = PARSERS[kind](text)
+    hints = location_hints(text)
+    if kind == 'auto':
+        detected = detect_kind(text)
+        if not detected:
+            return {'ok': False, 'method': method, 'kind': None, 'hints': hints, 'fields': {}, 'confidence': {},
+                    'message': 'No se reconoció si es una factura de electricidad, de gas o un manifiesto de residuos. Elegí el tipo a mano.'}
+
+    fields, confidence = PARSERS[detected](text)
     found_any = any(v not in (None, '') for v in fields.values())
     source = 'el texto del PDF' if method == 'pdf-text' else 'OCR'
     if found_any:
         message = f'Datos leídos automáticamente con {source}. Revisalos antes de confirmar.'
     else:
         message = f'Se leyó el documento con {source} pero no se reconocieron los campos esperados. Completá los datos a mano.'
-    return {'ok': found_any, 'method': method, 'message': message, 'fields': fields, 'confidence': confidence}
+    return {'ok': found_any, 'method': method, 'kind': detected, 'message': message, 'fields': fields,
+            'confidence': confidence, 'hints': hints}

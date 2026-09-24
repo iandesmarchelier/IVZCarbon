@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse,
 from pydantic import BaseModel, Field
 
 from .invoice_parser import parse_document
-from . import inventory, matching, reports
+from . import features, inventory, matching, reports
 from .security import hash_password, verify_password, token_hash
 from .storage import db, initialize, decode, database_url, event
 
@@ -74,11 +74,13 @@ def account_by_token(request):
     if not token:
         return None
     with db() as s:
-        row = s.execute('SELECT a.id,a.username,a.company FROM carbon_accounts a JOIN carbon_api_tokens t ON t.account=a.id WHERE t.token_hash=?',
+        row = s.execute('SELECT a.id,a.username,a.company,a.settings FROM carbon_accounts a JOIN carbon_api_tokens t ON t.account=a.id WHERE t.token_hash=? AND a.active',
                         (token_hash(token),)).fetchone()
+        if row and not features.parse(row['settings'])['integrations']['hub']:
+            raise HTTPException(403, 'La integración con IVZ Sustainability Hub está desactivada para esta cuenta.')
         if row:
             s.execute('UPDATE carbon_api_tokens SET last_used=? WHERE token_hash=?', (datetime.now(timezone.utc).isoformat(), token_hash(token)))
-    return dict(row) if row else None
+    return {k: row[k] for k in ('id', 'username', 'company')} if row else None
 
 
 def account_flexible(request):
@@ -143,8 +145,25 @@ def logout(request: Request, response: Response):
 @app.get('/api/me')
 def me(request: Request):
     user = account(request)
+    with db() as s:
+        switches = features.of(s, user['id'])
     return {'id': user['id'], 'username': user['username'], 'company': user['company'],
-            'role': user['role'], 'impersonating': bool(user.get('impersonated_by'))}
+            'role': user['role'], 'impersonating': bool(user.get('impersonated_by')), 'features': switches}
+
+
+def section_user(request, section):
+    """The signed-in account, provided the administrator left this section visible for it."""
+    user = account(request)
+    with db() as s:
+        features.require(s, user['id'], 'sections', section, 'Esta sección no está habilitada para tu cuenta.')
+    return user
+
+
+def hub_user(request):
+    user = account(request)
+    with db() as s:
+        features.require(s, user['id'], 'integrations', 'hub', 'La integración con IVZ Sustainability Hub está desactivada para esta cuenta.')
+    return user
 
 
 @app.get('/api/state')
@@ -228,27 +247,27 @@ def list_closures(request: Request):
 
 @app.post('/api/reports')
 def generate_report(body: reports.ReportRequest, request: Request):
-    return reports.create(account(request), body)
+    return reports.create(section_user(request, 'reportes'), body)
 
 
 @app.get('/api/reports')
 def report_history(request: Request):
-    return reports.history(account(request)['id'])
+    return reports.history(section_user(request, 'reportes')['id'])
 
 
 @app.get('/api/reports/{report_id}')
 def report_data(report_id: str, request: Request):
-    return reports.get(account(request)['id'], report_id)
+    return reports.get(section_user(request, 'reportes')['id'], report_id)
 
 
 @app.post('/api/reports/{report_id}/approve')
 def approve_report(report_id: str, request: Request):
-    return reports.approve(account(request), report_id)
+    return reports.approve(section_user(request, 'reportes'), report_id)
 
 
 @app.get('/reports/{report_id}', response_class=HTMLResponse)
 def report_document(report_id: str, request: Request):
-    return reports.render(reports.get(account(request)['id'], report_id))
+    return reports.render(reports.get(section_user(request, 'reportes')['id'], report_id))
 
 
 @app.get('/reports.js')
@@ -313,27 +332,34 @@ class TokenCreate(BaseModel):
     label: str = Field(min_length=1, max_length=100)
 
 
+def new_token(s, account_id, label):
+    token = 'ivzc_' + secrets.token_urlsafe(32)
+    s.execute('INSERT INTO carbon_api_tokens VALUES (?,?,?,?,?,?)',
+              (str(uuid.uuid4()), account_id, label.strip(), token_hash(token), datetime.now(timezone.utc).isoformat(), None))
+    return token
+
+
+def tokens_of(s, account_id):
+    return [dict(r) for r in s.execute('SELECT id,label,created,last_used FROM carbon_api_tokens WHERE account=? ORDER BY created DESC', (account_id,)).fetchall()]
+
+
 @app.post('/api/tokens')
 def create_token(body: TokenCreate, request: Request):
-    user = account(request)
-    token = 'ivzc_' + secrets.token_urlsafe(32)
+    user = hub_user(request)
     with db() as s:
-        s.execute('INSERT INTO carbon_api_tokens VALUES (?,?,?,?,?,?)',
-                  (str(uuid.uuid4()), user['id'], body.label.strip(), token_hash(token), datetime.now(timezone.utc).isoformat(), None))
-    return {'token': token}
+        return {'token': new_token(s, user['id'], body.label)}
 
 
 @app.get('/api/tokens')
 def list_tokens(request: Request):
-    user = account(request)
+    user = hub_user(request)
     with db() as s:
-        rows = s.execute('SELECT id,label,created,last_used FROM carbon_api_tokens WHERE account=? ORDER BY created DESC', (user['id'],)).fetchall()
-    return [dict(r) for r in rows]
+        return tokens_of(s, user['id'])
 
 
 @app.delete('/api/tokens/{token_id}')
 def revoke_token(token_id: str, request: Request):
-    user = account(request)
+    user = hub_user(request)
     with db() as s:
         s.execute('DELETE FROM carbon_api_tokens WHERE id=? AND account=?', (token_id, user['id']))
     return {'ok': True}
@@ -433,7 +459,7 @@ def inventory_csv(request: Request):
 
 
 @app.post('/api/parse-document')
-async def parse_document_endpoint(request: Request, kind: Literal['elec', 'gas', 'waste'] = Form(...), file: UploadFile = File(...)):
+async def parse_document_endpoint(request: Request, kind: Literal['elec', 'gas', 'waste', 'auto'] = Form(...), file: UploadFile = File(...)):
     account(request)
     data = await file.read()
     return parse_document(data, file.filename or '', kind)
@@ -501,6 +527,57 @@ def admin_set_active(account_id: str, body: AdminSetActive, request: Request):
         if not body.active:
             s.execute('DELETE FROM carbon_sessions WHERE account=?', (account_id,))
         event(s, admin['id'], 'admin_set_active', 0, {'target': account_id, 'username': target['username'], 'active': body.active})
+    return {'ok': True}
+
+
+def admin_target(s, account_id):
+    target = s.execute('SELECT id,username,role FROM carbon_accounts WHERE id=?', (account_id,)).fetchone()
+    if not target:
+        raise HTTPException(404, 'Cuenta no encontrada.')
+    return target
+
+
+@app.get('/api/admin/accounts/{account_id}/settings')
+def admin_get_settings(account_id: str, request: Request):
+    require_admin(request)
+    with db() as s:
+        admin_target(s, account_id)
+        return {**features.catalogue(features.of(s, account_id)), 'tokens': tokens_of(s, account_id)}
+
+
+class AdminSettings(BaseModel):
+    sections: dict[str, bool] = {}
+    integrations: dict[str, bool] = {}
+
+
+@app.put('/api/admin/accounts/{account_id}/settings')
+def admin_put_settings(account_id: str, body: AdminSettings, request: Request):
+    admin = require_admin(request)
+    with db() as s:
+        target = admin_target(s, account_id)
+        current = features.update(s, account_id, body.model_dump())
+        event(s, admin['id'], 'admin_settings', 0, {'target': account_id, 'username': target['username'], **body.model_dump()})
+    return features.catalogue(current)
+
+
+@app.post('/api/admin/accounts/{account_id}/tokens')
+def admin_create_token(account_id: str, body: TokenCreate, request: Request):
+    admin = require_admin(request)
+    with db() as s:
+        target = admin_target(s, account_id)
+        features.require(s, account_id, 'integrations', 'hub', 'Activá primero la integración con IVZ Sustainability Hub.')
+        token = new_token(s, account_id, body.label)
+        event(s, admin['id'], 'admin_create_token', 0, {'target': account_id, 'username': target['username'], 'label': body.label.strip()})
+    return {'token': token}
+
+
+@app.delete('/api/admin/accounts/{account_id}/tokens/{token_id}')
+def admin_revoke_token(account_id: str, token_id: str, request: Request):
+    admin = require_admin(request)
+    with db() as s:
+        target = admin_target(s, account_id)
+        s.execute('DELETE FROM carbon_api_tokens WHERE id=? AND account=?', (token_id, account_id))
+        event(s, admin['id'], 'admin_revoke_token', 0, {'target': account_id, 'username': target['username']})
     return {'ok': True}
 
 

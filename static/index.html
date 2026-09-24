@@ -511,6 +511,7 @@ tfoot td{border-top:1px solid var(--line-2);border-bottom:none;font-weight:600;b
 .modal{background:var(--surface);border-radius:14px;box-shadow:var(--sh-lg);width:min(600px,100%);max-height:90vh;display:flex;flex-direction:column;transform:translateY(8px) scale(.98);opacity:0;transition:transform .16s,opacity .16s;margin:auto}
 .mscrim.on .modal{transform:none;opacity:1}
 .modal.wide{width:min(920px,100%)}
+.modal.xwide{width:min(1240px,100%)}
 .modal.narrow{width:min(440px,100%)}
 .modal-h{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:12px;flex:none}
 .modal-h h3{font-size:15.5px;font-weight:600;letter-spacing:-.01em}
@@ -829,6 +830,24 @@ table.invtbl tr.scoperow>td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
   display:flex;align-items:center;justify-content:center;color:var(--accent);margin:0 auto 10px}
 .fd-ic svg{width:18px;height:18px}
 .fd-t{font-size:12.5px;color:var(--ink-2);margin-bottom:12px}
+.bulkdrop.over{border-color:var(--accent);background:var(--accent-soft)}
+.bulkdrop.compact{padding:12px 16px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
+.bulkdrop.compact .fd-t{margin:0}
+.bulk-tbl{max-height:52vh}
+.bulk-tbl table{min-width:1150px;table-layout:fixed}
+.bulk-tbl td{vertical-align:top;padding-top:8px;padding-bottom:8px}
+.bulk-tbl col.c-chk{width:34px}.bulk-tbl col.c-doc{width:200px}.bulk-tbl col.c-kind{width:160px}.bulk-tbl col.c-site{width:185px}
+.bulk-tbl col.c-per{width:150px}.bulk-tbl col.c-qty{width:125px}.bulk-tbl col.c-det{width:175px}.bulk-tbl col.c-st{width:120px}.bulk-tbl col.c-x{width:40px}
+.bulk-tbl select,.bulk-tbl input:not([type=checkbox]){border:1px solid var(--line-2);border-radius:var(--r-sm);padding:5px 7px;font-size:12px;background:var(--surface);width:100%;min-width:0}
+.bulk-tbl .bulk-file .strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
+.bulk-tbl .bulk-detail{display:grid;gap:4px}
+.bulk-qty{display:flex;align-items:center;gap:5px}
+.bulk-why{margin-top:3px}
+.bulk-note{color:var(--warn);margin-top:3px}
+.bulk-off td{opacity:.6}
+.lc-supply{font-size:11px;color:var(--muted);margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.lc-supply span{background:var(--surface-2);border:1px solid var(--line);border-radius:99px;padding:0 4px 0 8px;font-variant-numeric:tabular-nums}
+.lc-supply button{border:0;background:none;color:var(--muted-2);cursor:pointer;padding:0 3px;font-size:12px}
 .note svg,.tiny svg{width:13px;height:13px;vertical-align:-2px;margin-right:2px;flex:none}
 
 /* ---- Calidad e Incertidumbre ---- */
@@ -3124,14 +3143,14 @@ const FLOWSTEPS=[
  {k:'inv',t:'Inventario GHG',ic:'layers',d:'Resultado auditable',items:['Alcance 1 con sus 4 subcategorías','Alcance 2 location-based y market-based','Alcance 3 por categoría del GHG Protocol','Trazabilidad completa hasta el comprobante','Reportes mensuales y anuales']},
 ];
 const CARBON_CONNECTORS=[
- {name:'SAP ERP — Compras y Finanzas',icon:'store',status:'Sin conectar',freq:'Diaria 03:00',desc:'Posiciones de OC, documentos de material y facturas de energía y combustibles desde el ERP corporativo.'},
- {name:'TMS — gestión de transporte',icon:'truck',status:'Sin conectar',freq:'Semanal',desc:'Guía de transporte por movimiento, peso despachado, kilómetros del tramo y transportista.'},
- {name:'Medidores de energía',icon:'meter',status:'Sin conectar',freq:'Cada 15 min',desc:'Consumo eléctrico por circuito y por equipo, base del modelo de Alcance 2 por máquina.'},
- {name:'Plataforma de viajes corporativa',icon:'route',status:'Sin conectar',freq:'—',desc:'Itinerarios, distancias y noches de hotel — hoy se cargan al rendir el gasto.'},
- {name:'Portal del operador de residuos',icon:'tank',status:'Sin conectar',freq:'Mensual',desc:'Manifiestos de transporte de residuos por tipo de tratamiento.'},
- {name:'Encuesta de movilidad (RRHH)',icon:'user',status:'Sin conectar',freq:'—',desc:'Distribución modal del traslado casa-trabajo y jornadas remotas.'},
- {name:'GMAO / service técnico',icon:'gear',status:'Sin conectar',freq:'—',desc:'Horas de máquina reales y recarga de refrigerantes por fuga.'},
- {name:'Excel / CSV',icon:'upload',status:'Activo',freq:'Ad hoc',desc:'Carga manual asistida con validación y mapeo de columnas.',go:'datacenter'},
+ {key:'sap',name:'SAP ERP — Compras y Finanzas',icon:'store',status:'Sin conectar',freq:'Diaria 03:00',desc:'Posiciones de OC, documentos de material y facturas de energía y combustibles desde el ERP corporativo.'},
+ {key:'tms',name:'TMS — gestión de transporte',icon:'truck',status:'Sin conectar',freq:'Semanal',desc:'Guía de transporte por movimiento, peso despachado, kilómetros del tramo y transportista.'},
+ {key:'medidores',name:'Medidores de energía',icon:'meter',status:'Sin conectar',freq:'Cada 15 min',desc:'Consumo eléctrico por circuito y por equipo, base del modelo de Alcance 2 por máquina.'},
+ {key:'viajes',name:'Plataforma de viajes corporativa',icon:'route',status:'Sin conectar',freq:'—',desc:'Itinerarios, distancias y noches de hotel — hoy se cargan al rendir el gasto.'},
+ {key:'residuos',name:'Portal del operador de residuos',icon:'tank',status:'Sin conectar',freq:'Mensual',desc:'Manifiestos de transporte de residuos por tipo de tratamiento.'},
+ {key:'movilidad',name:'Encuesta de movilidad (RRHH)',icon:'user',status:'Sin conectar',freq:'—',desc:'Distribución modal del traslado casa-trabajo y jornadas remotas.'},
+ {key:'gmao',name:'GMAO / service técnico',icon:'gear',status:'Sin conectar',freq:'—',desc:'Horas de máquina reales y recarga de refrigerantes por fuga.'},
+ {key:'excel',name:'Excel / CSV',icon:'upload',status:'Activo',freq:'Ad hoc',desc:'Carga manual asistida con validación y mapeo de columnas.',go:'datacenter'},
 ];
 function connStatusPill(status){
   const cls=status==='Activo'?'ok':status==='Manual'?'warn':'';
@@ -3152,9 +3171,10 @@ function connStatRows(pairs){
 }
 V.integraciones=f=>{
   return head('Integraciones','Fuentes conectadas que alimentan el modelo ESG de forma automática.')
-  +`<div class="grid g3">${carbonTokenCard()}${CARBON_CONNECTORS.map(c=>connCard(c.name,c.icon,connStatusPill(c.status),c.desc,
+  +`<div class="grid g3">${intOn('hub')?carbonTokenCard():''}${CARBON_CONNECTORS.filter(c=>intOn(c.key)).map(c=>connCard(c.name,c.icon,connStatusPill(c.status),c.desc,
       connStatRows([['Última sync','—'],['Frecuencia',esc(c.freq)],['Registros','—']]),
-      c.go?`go('${c.go}')`:`toast('Este conector es una demostración del alcance del producto — no se conecta a ningún sistema real.','ℹ')`)).join('')}</div>`;
+      c.go?`go('${c.go}')`:`toast('Este conector es una demostración del alcance del producto — no se conecta a ningún sistema real.','ℹ')`)).join('')}</div>`
+  +(!intOn('hub')&&!CARBON_CONNECTORS.some(c=>intOn(c.key))?'<div class="card"><div class="empty">No hay integraciones habilitadas para esta cuenta. Pedíselas a tu administrador de IVZ Carbon.</div></div>':'');
 };
 
 /* ---------------- Token de acceso para IVZ Sustainability Hub ----------- */
@@ -3309,45 +3329,6 @@ V.reportes=f=>{
    ${uqReportSectionHTML({...f,year:String(year)})}`;
 };
 
-/* ------------------------ Alcance del prototipo ------------------------- */
-V.acerca=f=>{
-  const real=[['Motor de cálculo','Cada emisión se calcula registro a registro (dato de actividad × factor). Ningún total está escrito a mano.'],
-   ['Alcance 1 y 2 por subcategoría','Las cuatro subcategorías de cada alcance existen en el modelo, incluso cuando no tienen datos: se muestran en cero.'],
-   ['Reporte dual de Alcance 2','Location-based y market-based se calculan sobre el mismo kWh con factores distintos.'],
-   ['Ubicaciones y facturas','Cargar la factura de electricidad o gas de un sitio calcula el Alcance 1 o 2 de ese período y reemplaza cualquier estimación anterior de la misma energía, sin duplicar.'],
-   ['Inventario de residuos','Cada corriente tiene precargados sus tratamientos posibles; el factor sale solo de la combinación residuo × tratamiento, nunca se elige a mano.'],
-   ['Movilidad','Traslados de insumos (tramos, pesos, distancias y t·km) y viajes de negocio sobre un globo 3D; el globo, los filtros y el cálculo responden a los mismos datos.'],
-   ['Regla de no duplicación','El transporte con flota propia se reconoce en Alcance 1 y queda excluido de la Categoría 4.'],
-   ['Trazabilidad','Los nueve bloques de la cadena se arman desde el propio registro: el recorrido es real dentro del prototipo.'],
-   ['Filtros e indicadores','Período, sitio, alcance, categoría, intensidades y KPIs se recalculan sobre los registros.'],
-   ['Administración de cuentas','Un rol admin separado del de cliente: alta de cuentas nuevas, reseteo de contraseña, desactivación y "entrar como" un cliente para configurarlo, todo auditado en los eventos de esa cuenta.'],
-   ['Lectura de facturas de electricidad y gas','Subir el PDF real de una factura de Edenor, UTE o Metrogas extrae los datos del documento (texto embebido o, si no lo tiene, OCR con Tesseract) sin ningún modelo de lenguaje de por medio, y los deja para revisar antes de confirmar. "Usar una factura de ejemplo" sigue siendo un dato simulado, para probar el flujo sin archivo.']];
-  const sim=[['Datos de la empresa','Sitios, consumos, compras y movimientos son ficticios, generados de forma determinística.'],
-   ['Lectura de manifiestos de residuos','Todavía no hay un proveedor de referencia: la lectura es un parser genérico y sus valores se marcan de confianza baja. Revisalos siempre antes de confirmar.'],
-   ['OCR en producción','Tesseract (el motor de OCR) no está instalado en el hosting actual (Vercel). Ahí, una factura sin texto embebido en el PDF (ej. Edenor, Metrogas) pide completar los datos a mano; en desarrollo local o self-hosted con el Dockerfile del repo, la lectura es completa.'],
-   ['Integraciones','Los conectores no se conectan a ningún sistema: simulan lo que llegaría de un ERP, un TMS o un portal de residuos.'],
-   ['Reglas de clasificación','El motor de reglas está simulado en el navegador: la condición y el nivel de confianza son ilustrativos.'],
-   ['Carga de Excel','El asistente lee el archivo y valida las filas, pero el alta se hace sobre los datos en memoria de esta sesión.'],
-   ['Globo','Es un globo vectorial propio (contornos de Natural Earth, dominio público), sin conexión a servicios de mapas externos; las distancias son valores de referencia por tramo, no un cálculo de ruteo real.'],
-   ['Factores de emisión','Son referencias de trabajo con su fuente declarada. No fueron verificados para uso en un reporte.'],
-   ['Permisos dentro de una cuenta','El rol admin ve y gestiona cuentas de clientes; dentro de la cuenta de un cliente sigue habiendo un solo perfil que ve todo, sin roles internos (ej. solo lectura).']];
-  const next=['Elegir la primera categoría de Alcance 3 a automatizar de punta a punta contra el ERP real.',
-   'Acordar el modelo de datos de la plantilla Excel y de la extracción del TMS antes de escribir el importador.',
-   'Definir el umbral de confianza y el flujo de revisión y aprobación mensual del inventario.',
-   'Validar el catálogo de factores, su procedimiento de actualización y el criterio de factor residual para Alcance 2.',
-   'Definir el tratamiento de los movimientos con flota propia en el maestro de vehículos.',
-   'Migrar el hosting de producción a un contenedor (ya existe el Dockerfile) para que el OCR con Tesseract funcione también ahí, no solo en desarrollo o self-host.',
-   'Conseguir manifiestos de residuos reales de al menos un operador para reemplazar el parser genérico por uno específico, como ya se hizo con Edenor, UTE y Metrogas.'];
-  const box=(t3,items)=>`<div class="card"><div class="card-h"><h3>${t3}</h3></div><div class="card-b tight">
-    <table><tbody>${items.map(([a,b])=>`<tr><td style="width:34%" class="strong">${a}</td><td class="dim">${b}</td></tr>`).join('')}</tbody></table></div></div>`;
-  return head('Alcance del prototipo','Qué es funcional y qué está simulado, para que la demostración no genere expectativas equivocadas.','')
-  +`<div class="card" style="margin-bottom:16px"><div class="card-b"><div class="note"><b>IVZ Carbon ${APP_VERSION}</b> transforma datos operativos que ya existen en el ERP y otros sistemas en un inventario de carbono corporativo recurrente, trazable y auditable. Esta versión trabaja exclusivamente sobre la huella corporativa (GHG Protocol / ISO 14064-1).</div></div></div>
-    <div class="grid g2">${box('Funciona de verdad',real)}${box('Está simulado',sim)}</div>
-    <div class="card mt"><div class="card-h"><h3>Decisiones a tomar antes de desarrollar</h3></div><div class="card-b">
-      <ol style="margin:0;padding-left:20px;line-height:1.9;font-size:13px">${next.map(x=>`<li>${x}</li>`).join('')}</ol></div></div>
-    <div class="note mt">Los nombres, cifras y la marca de esta pantalla son de demostración. El prototipo sirve para validar estructura, flujos y propuesta de valor, no para reportar emisiones.</div>`;
-};
-
 /* ------------------ exportación del inventario a XLSX ------------------- */
 function exportInventoryXLSX(f){
   const rs=query(f), sc=byScope(rs), tot=sum(rs), ck=byCatKey(rs);
@@ -3382,22 +3363,29 @@ function exportInventoryXLSX(f){
 /* ============================ navegación ================================ */
 const NAV=[
  ['Análisis',[['dash','Panel ejecutivo','dash'],['corporativo','Inventario corporativo','layers'],['trazabilidad','Trazabilidad','route'],['incertidumbre','Calidad e incertidumbre','target']]],
- ['Operación',[['planta','Ubicaciones y facturas','building'],['energia','Consumo energético','bolt'],['movilidad','Movilidad','globe'],['transacciones','Transacciones y clasificación','swap'],['asignacion','Asignación de factores','check']]],
+ ['Operación',[['planta','Ubicaciones y facturas','building'],['energia','Consumo energético','bolt'],['movilidad','Movilidad','globe'],['asignacion','Asignación de factores','check'],['transacciones','Transacciones y clasificación','swap']]],
  ['Datos',[['integraciones','Integraciones ERP','plug'],['datacenter','Carga por Excel','upload'],['factores','Factores de emisión','sigma'],['reportes','Reportes','doc']]],
- ['Prototipo',[['acerca','Alcance del prototipo','info']]],
 ];
+/* Secciones e integraciones que el administrador habilitó para esta cuenta (backend/features.py).
+   bridge.js las carga de /api/me antes del primer render; el Panel ejecutivo siempre está. */
+let FEATURES={sections:{energia:false},integrations:{}};
+const secOn=k=>k==='dash'||FEATURES.sections[k]!==false;
+const intOn=k=>FEATURES.integrations[k]!==false;
 S.f={year:'2025',month:'all',site:'all'};
 S.view='dash';
-function go(v,arg){S.view=v;S.arg=arg;location.hash=v;render();window.scrollTo({top:0,behavior:'instant'})}
+function go(v,arg){
+  if(!secOn(v)){ toast('Esta sección no está habilitada para tu cuenta.','ℹ'); return; }
+  S.view=v;S.arg=arg;location.hash=v;render();window.scrollTo({top:0,behavior:'instant'})}
 function setFilter(k,v){S.f[k]=v;render()}
 function render(){
   if(S.view==='movimientos'){ S.view='movilidad'; try{history.replaceState(null,'','#movilidad')}catch(e){} }
+  if(!V[S.view]||!secOn(S.view)){ S.view='dash'; try{history.replaceState(null,'','#dash')}catch(e){} }
   const f=S.f;
   const tsEl=document.getElementById('tenantSites');
   if(tsEl) tsEl.textContent=nf(SITES.length)+' sitios · '+[...new Set(SITES.map(s=>s.cc))].join(' · ');
-  document.getElementById('nav').innerHTML=NAV.map(([g,items])=>`<div class="navgrp">${g}</div>`+
+  document.getElementById('nav').innerHTML=NAV.map(([g,all])=>{const items=all.filter(([k])=>secOn(k)); return !items.length?'':`<div class="navgrp">${g}</div>`+
     items.map(([k,l,ic])=>{const pend=k==='transacciones'?query(f).filter(r=>r.cls&&r.cls.state!=='auto').length:k==='asignacion'?fmPending(query(f)).length:0;
-      return `<button class="navitem ${S.view===k?'on':''}" onclick="go('${k}')">${ico(ic)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span>${pend?`<span class="badge">${pend}</span>`:''}</button>`}).join('')).join('');
+      return `<button class="navitem ${S.view===k?'on':''}" onclick="go('${k}')">${ico(ic)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l}</span>${pend?`<span class="badge">${pend}</span>`:''}</button>`}).join('')}).join('');
   const cur=NAV.flatMap(n=>n[1]).find(i=>i[0]===S.view);
   document.getElementById('crumb').innerHTML='Invenzis Carbon Industry <span style="opacity:.5">/</span> <b>'+(cur?cur[1]:'')+'</b>';
   document.getElementById('headActions').innerHTML='';
@@ -3414,7 +3402,7 @@ document.addEventListener('click',e=>{const el=e.target.closest&&e.target.closes
   if(!el)return; const d=el.getAttribute('data-drill')||'';
   if(d.startsWith('m:')){S.node=d;go('planta')}
   else if(d.startsWith('scope:')){S.dr={scope:+d.slice(6),cat:null,site:null,src:null};go('trazabilidad')}});
-window.addEventListener('hashchange',()=>{const h=location.hash.slice(1);if(h&&V[h]&&h!==S.view){S.view=h;render()}});
+window.addEventListener('hashchange',()=>{const h=location.hash.slice(1);if(h&&V[h]&&h!==S.view&&secOn(h)){S.view=h;render()}});
 if(location.hash&&V[location.hash.slice(1)])S.view=location.hash.slice(1);
 
 
@@ -3497,15 +3485,16 @@ V.planta=f=>{
     return locCard(site,a1,a2,invs,missing,curP);
   }).join('');
   return head('Ubicaciones y facturas','Todas las sedes de la empresa — plantas, oficinas y depósitos. Cargar la factura de electricidad o de gas de cada una calcula al instante su Alcance 1 o 2, sin modelar equipo por equipo.',
-    `<button class="btn primary" onclick="openModal(siteModalHTML())">${ico('plus')} Nueva ubicación</button>`)
+    `<button class="btn" onclick="openBulkDocs()">${ico('upload')} Carga masiva de facturas y manifiestos</button><button class="btn primary" onclick="openModal(siteModalHTML())">${ico('plus')} Nueva ubicación</button>`)
   +`<div class="grid g2" data-tour="loc-cards">${cards}</div>
-    <div class="note mt">Cargar una factura para un sitio y un período reemplaza cualquier estimación anterior de esa misma energía en ese período — nunca se suma, para que el total no quede duplicado. El detalle histórico por equipo sigue disponible en «Consumo energético».</div>`;
+    <div class="note mt">Cargar una factura para un sitio y un período reemplaza cualquier estimación anterior de esa misma energía en ese período — nunca se suma, para que el total no quede duplicado.${secOn('energia')?' El detalle histórico por equipo sigue disponible en «Consumo energético».':''}</div>`;
 };
 function locCard(site,a1,a2,invs,missing,curP){
   return `<div class="card loccard">
     <div class="lc-h"><div class="lc-ic">${ico(siteIcon(site.type))}</div>
       <div style="min-width:0;flex:1"><div class="lc-name">${esc(site.name)}</div>
-        <div class="lc-meta">${esc(site.type)} · ${esc(site.country)}${site.people?' · '+nf(site.people)+' pers.':''}${site.area?' · '+nf(site.area)+' m²':''}</div></div></div>
+        <div class="lc-meta">${esc(site.type)} · ${esc(site.country)}${site.people?' · '+nf(site.people)+' pers.':''}${site.area?' · '+nf(site.area)+' m²':''}</div>
+        ${(site.supply||[]).length?`<div class="lc-supply" title="Números aprendidos en la carga masiva: identifican los documentos de esta sede">N° de cliente / suministro: ${site.supply.map((n,i)=>`<span>${esc(n)}<button onclick="siteSupplyRemove('${site.id}',${i})" title="Olvidar este número">×</button></span>`).join('')}</div>`:''}</div></div>
     <div class="lc-kpis">
       <div><div class="lc-kv">Alcance 1</div><div class="lc-val">${t(a1,2)}<small> tCO₂e</small></div></div>
       <div><div class="lc-kv">Alcance 2</div><div class="lc-val">${t(a2,2)}<small> tCO₂e</small></div></div>
@@ -3522,6 +3511,8 @@ function locCard(site,a1,a2,invs,missing,curP){
         '<div class="tiny dim" style="padding:5px 0 2px">Todavía no se cargó ninguna factura para esta sede.</div>'}
     </div></div>`;
 }
+
+function siteSupplyRemove(siteId,i){ const s=SBI[siteId]; if(s&&s.supply){ s.supply.splice(i,1); render(); } }
 
 /* ------------------------------ modal: factura ---------------------------- */
 async function uploadDocument(path,formData){
@@ -3727,6 +3718,189 @@ function wmModalHTML(){
     ${factor?`<div class="note mt">Se va a aplicar <b>${factor.id}</b> — ${esc(factor.act)} (${factor.v} kgCO₂e/kg).</div>`:'<div class="note mt">Elegí el tratamiento para ver qué factor se va a aplicar.</div>'}
   </div>
   <div class="modal-f"><button class="btn" onclick="wmBack()">Volver</button><button class="btn primary" ${S.wm.reading?'disabled':''} onclick="wmConfirm()">Confirmar y calcular</button></div>`;
+}
+
+/* ------------------ carga masiva: facturas y manifiestos juntos ------------------ */
+/* Se suben varios documentos a la vez. El servidor lee cada uno (texto del PDF, u OCR donde
+   está instalado) y dice si es una factura de electricidad, de gas o un manifiesto, con su
+   período y cantidad. La ubicación sale de un N° de cliente o suministro que ya se usó para
+   esa sede, o de su nombre y dirección en el texto. Todo queda para revisar antes de guardar;
+   al guardar, los números de suministro confirmados quedan aprendidos en la sede. */
+S.bulk=null;
+const BULK_KIND={elec:'Electricidad',gas:'Gas natural',waste:'Residuos (manifiesto)'};
+const BULK_UNIT={elec:'kWh',gas:'m³',waste:'kg'};
+const BULK_PROVIDER_CC={UTE:'UY',Edenor:'AR',Metrogas:'AR'};
+const BULK_MAX_BYTES=4000000, BULK_PARALLEL=3;
+const BULK_STOP=new Set(['planta','oficina','oficinas','deposito','sede','centro','del','las','los','avenida','calle','ruta','lote','parque','industrial','sucursal','residuo','residuos','otros','para']);
+function openBulkDocs(){
+  if(!S.bulk) S.bulk={rows:[],seq:0,queue:[],active:0};
+  openModal(bulkHTML(),{xwide:true});
+}
+function bulkRerender(){ const m=document.querySelector('#mscrim .modal'); if(m&&S.bulk) m.innerHTML=bulkHTML(); }
+function bulkDiscard(){ S.bulk=null; closeModal(); }
+function bulkDrop(e){ e.preventDefault(); e.currentTarget.classList.remove('over'); bulkAddFiles(e.dataTransfer.files); }
+function bulkAddFiles(list){
+  const files=[...(list||[])]; if(!files.length) return;
+  for(const file of files){
+    const row={id:++S.bulk.seq,name:file.name,status:'reading',msg:'',kind:'',site:'',siteHow:'',siteSure:false,period:'',qty:0,
+      provider:'',doc:'',date:'',operator:'',stream:'',treatment:'',detected:false,hints:{},include:true};
+    if(!/\.(pdf|jpe?g|png)$/i.test(file.name)){ row.status='error'; row.msg='Formato no admitido: subí PDF, JPG o PNG.'; row.include=false; }
+    else if(file.size>BULK_MAX_BYTES){ row.status='error'; row.msg='El archivo pesa más de 4 MB: no se puede leer.'; row.include=false; }
+    else S.bulk.queue.push([row,file]);
+    S.bulk.rows.push(row);
+  }
+  bulkRerender(); bulkPump();
+}
+function bulkPump(){
+  const b=S.bulk; if(!b) return;
+  while(b.active<BULK_PARALLEL&&b.queue.length){
+    const [row,file]=b.queue.shift(); b.active++;
+    const fd=new FormData(); fd.append('kind','auto'); fd.append('file',file,file.name);
+    uploadDocument('/api/parse-document',fd).then(res=>bulkClassify(row,res))
+      .catch(e=>{ row.status='error'; row.msg='No se pudo leer: '+e.message; })
+      .finally(()=>{ if(S.bulk!==b) return; b.active--; bulkRerender(); bulkPump(); });
+  }
+}
+function bulkPeriodFromName(name){
+  const s=String(name||''); let m;
+  if((m=s.match(/(20\d{2})[-_. ]?(0[1-9]|1[0-2])(?!\d)/))) return m[1]+'-'+m[2];
+  if((m=s.match(/(?<!\d)(0[1-9]|1[0-2])[-_. ](20\d{2})/))) return m[2]+'-'+m[1];
+  return '';
+}
+function bulkClassify(row,res){
+  const d=res.fields||{};
+  row.status='read'; row.msg=res.ok?'':(res.message||''); row.hints=res.hints||{}; row.kind=res.kind||'';
+  row.provider=d.provider||''; row.doc=d.doc||''; row.qty=+d.qty||0;
+  row.period=d.period||(d.date?String(d.date).slice(0,7):'')||bulkPeriodFromName(row.name);
+  if(row.kind==='waste'){ row.date=d.date||''; row.operator=d.operator||''; }
+  const m=bulkMatchSite(row.hints,row.provider); row.site=m.site; row.siteHow=m.how; row.siteSure=m.sure;
+  if(row.kind==='waste') bulkPickStream(row,d.treatment||'');
+}
+/* números de cliente o suministro que identifican a una sola sede: los aprendidos al guardar */
+function bulkDigits(v){ return String(v||'').replace(/\D/g,''); }
+function bulkMatchSite(h,provider){
+  const nums=new Set((h.accounts||[]).map(bulkDigits).filter(n=>n.length>=4));
+  const bySupply=SITES.filter(s=>(s.supply||[]).some(x=>nums.has(bulkDigits(x))));
+  if(bySupply.length===1) return {site:bySupply[0].id,how:'Por el N° de cliente o suministro',sure:true};
+  if(SITES.length===1) return {site:SITES[0].id,how:'Única ubicación de la cuenta',sure:true};
+  const cc=BULK_PROVIDER_CC[provider], pool=SITES.filter(s=>!cc||s.cc===cc);
+  const words=new Set(normTxt((h.addresses||[]).join(' ')+' '+(h.text||'')).split(' '));
+  const scored=pool.map(s=>{ const toks=[...new Set(normTxt(s.name+' '+(s.addr||'')).split(' ').filter(w=>w.length>=3&&!BULK_STOP.has(w)))];
+    return {s,score:toks.length?toks.filter(w=>words.has(w)).length/toks.length:0}; }).sort((a,b)=>b.score-a.score);
+  const best=scored[0], second=scored[1];
+  if(best&&best.score>0){
+    const sure=best.score>=0.5&&(!second||best.score-second.score>=0.25);
+    return {site:best.s.id,how:(sure?'Por el nombre o la dirección':'Coincidencia parcial')+' ('+Math.round(best.score*100)+'%)',sure};
+  }
+  if(pool.length===1) return {site:pool[0].id,how:'Única ubicación en '+pool[0].country,sure:false};
+  return {site:'',how:'',sure:false};
+}
+function bulkPickStream(row,treatment){
+  const pool=WASTECAT.filter(w=>!row.site||w.site===row.site);
+  const words=new Set(normTxt(row.hints.text||'').split(' '));
+  const scored=pool.map(w=>{ const toks=normTxt(w.name).split(' ').filter(x=>x.length>=4&&!BULK_STOP.has(x));
+    return {w,score:toks.length?toks.filter(x=>words.has(x)).length/toks.length:0}; }).sort((a,b)=>b.score-a.score);
+  row.stream=scored[0]&&scored[0].score>=0.5?scored[0].w.id:(pool.length===1?pool[0].id:'');
+  const w=WCBI[row.stream], keys=w?w.treatments.map(t=>t[0]):[];
+  row.detected=!!treatment&&keys.includes(treatment);
+  row.treatment=row.detected?treatment:(keys.length===1?keys[0]:'');
+}
+function bulkSet(id,k,v){
+  const row=S.bulk&&S.bulk.rows.find(r=>r.id===id); if(!row) return;
+  if(k==='qty') row.qty=+v||0; else if(k==='include') row.include=!!v; else row[k]=v;
+  if(k==='site'){ row.siteHow='Elegida a mano'; row.siteSure=true; if(row.kind==='waste'&&row.stream&&WCBI[row.stream]&&WCBI[row.stream].site!==v) bulkPickStream(row,row.treatment); }
+  if(k==='kind'&&v==='waste') bulkPickStream(row,row.treatment);
+  if(k==='stream'){ const w=WCBI[v], keys=w?w.treatments.map(t=>t[0]):[]; if(!keys.includes(row.treatment)) row.treatment=keys.length===1?keys[0]:''; row.detected=false; }
+  if(k==='treatment') row.detected=false;
+  bulkRerender();
+}
+function bulkRemove(id){ S.bulk.rows=S.bulk.rows.filter(r=>r.id!==id); S.bulk.queue=S.bulk.queue.filter(([r])=>r.id!==id); bulkRerender(); }
+function bulkIssues(r){
+  if(r.status==='reading') return ['Leyendo…'];
+  const out=[];
+  if(!r.kind) out.push('Elegí el tipo');
+  if(!r.site) out.push('Elegí la ubicación');
+  if(!validPeriod(r.period)) out.push('Falta el período');
+  else if(window.carbonClosedYears&&window.carbonClosedYears().has(+r.period.slice(0,4))) out.push('El año '+r.period.slice(0,4)+' está cerrado');
+  if(!(r.qty>0)) out.push('Falta la cantidad');
+  if(r.kind==='waste'){ if(!r.stream) out.push('Elegí el residuo'); else if(!r.treatment) out.push('Elegí el tratamiento'); }
+  return out;
+}
+const bulkKey=r=>r.kind+'|'+r.site+'|'+r.period;
+function bulkNotes(r,ready){
+  if(r.kind!=='elec'&&r.kind!=='gas') return '';
+  const same=ready.filter(x=>x!==r&&bulkKey(x)===bulkKey(r));
+  // misma regla que clearPriorEnergy: la factura reemplaza lo que ya había de esa energía en ese período
+  const had=REC.filter(x=>x.site===r.site&&x.p===r.period&&(r.kind==='elec'?x.type==='elec':(x.type==='fuel'&&x.factor==='FE-001'))).length;
+  return [same.length?'Se suma con '+same.map(x=>x.name).join(', ')+' (misma sede y período).':'',
+    had?'Reemplaza '+(had===1?'el registro':'los '+had+' registros')+' de '+(r.kind==='elec'?'electricidad':'gas natural')+' ya cargado'+(had===1?'':'s')+' para '+pLabel(r.period)+'.':''].filter(Boolean).join(' ');
+}
+function bulkHTML(){
+  const b=S.bulk, rows=b.rows, reading=rows.filter(r=>r.status==='reading').length;
+  const ready=rows.filter(r=>r.include&&r.status!=='error'&&!bulkIssues(r).length);
+  const drop=`<div class="filedrop bulkdrop ${rows.length?'compact':''}" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="bulkDrop(event)">
+      ${rows.length?'':`<div class="fd-ic">${ico('upload')}</div>`}
+      <div class="fd-t">${rows.length?'Arrastrá más documentos acá o':'Arrastrá acá todas las facturas de electricidad y gas y los manifiestos de residuos, en PDF o foto, o'}</div>
+      <input type="file" id="bulkFiles" multiple accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="bulkAddFiles(this.files);this.value=''">
+      <button class="btn ${rows.length?'sm':''}" onclick="document.getElementById('bulkFiles').click()">Elegir archivos</button></div>`;
+  const siteOpts=r=>`<option value="">Elegí…</option>`+SITES.map(s=>`<option value="${s.id}" ${r.site===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+  const body=rows.map(r=>{
+    const issues=bulkIssues(r), err=r.status==='error';
+    const state=r.status==='reading'?`<span class="pill"><span class="spin-ic">${ico('gear')}</span> Leyendo…</span>`
+      :err?'<span class="pill warn">No se puede cargar</span>'
+      :issues.length?`<span class="pill warn">Revisar</span><div class="tiny dim bulk-why">${issues.map(esc).join(' · ')}</div>`
+      :`<span class="pill ok">Listo</span>${r.siteSure?'':'<div class="tiny dim bulk-why">Confirmá la ubicación</div>'}`;
+    const note=bulkNotes(r,ready);
+    const w=WCBI[r.stream];
+    const detail=r.kind==='waste'
+      ?`<select onchange="bulkSet(${r.id},'stream',this.value)"><option value="">Residuo…</option>${WASTECAT.filter(x=>!r.site||x.site===r.site).map(x=>`<option value="${x.id}" ${r.stream===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select>
+        <select onchange="bulkSet(${r.id},'treatment',this.value)"><option value="">Tratamiento…</option>${(w?w.treatments:[]).map(([k])=>`<option value="${k}" ${r.treatment===k?'selected':''}>${TREAT_LABEL[k]}</option>`).join('')}</select>`
+      :`<input value="${esc(r.provider)}" placeholder="Proveedor" onchange="bulkSet(${r.id},'provider',this.value)"><input value="${esc(r.doc)}" placeholder="N° de factura" onchange="bulkSet(${r.id},'doc',this.value)">`;
+    return `<tr class="${err||!r.include?'bulk-off':''}">
+      <td><input type="checkbox" ${r.include&&!err?'checked':''} ${err?'disabled':''} onchange="bulkSet(${r.id},'include',this.checked)" title="Incluir al guardar"></td>
+      <td class="bulk-file"><div class="strong" title="${esc(r.name)}">${esc(r.name)}</div>${r.msg?`<div class="tiny dim">${esc(r.msg)}</div>`:''}${note?`<div class="tiny bulk-note">${esc(note)}</div>`:''}</td>
+      ${err||r.status==='reading'?'<td colspan="5"></td>':`
+      <td><select onchange="bulkSet(${r.id},'kind',this.value)"><option value="">Tipo…</option>${Object.entries(BULK_KIND).map(([k,l])=>`<option value="${k}" ${r.kind===k?'selected':''}>${l}</option>`).join('')}</select></td>
+      <td><select onchange="bulkSet(${r.id},'site',this.value)">${siteOpts(r)}</select>${r.siteHow?`<div class="tiny dim">${esc(r.siteHow)}</div>`:''}</td>
+      <td><input type="month" value="${esc(r.period)}" onchange="bulkSet(${r.id},'period',this.value)"></td>
+      <td><div class="bulk-qty"><input type="number" min="0" step="any" value="${r.qty||''}" onchange="bulkSet(${r.id},'qty',this.value)"><span class="tiny dim">${BULK_UNIT[r.kind]||''}</span></div></td>
+      <td><div class="bulk-detail">${r.kind?detail:''}</div></td>`}
+      <td>${state}</td>
+      <td><button class="btn ghost sm" title="Quitar" onclick="bulkRemove(${r.id})">✕</button></td></tr>`;
+  }).join('');
+  const kinds=Object.keys(BULK_KIND).map(k=>[k,ready.filter(r=>r.kind===k).length]).filter(x=>x[1]).map(([k,n])=>n+' '+(k==='waste'?(n===1?'manifiesto':'manifiestos'):(k==='elec'?'de electricidad':'de gas'))).join(' · ');
+  return `<div class="modal-h"><div style="flex:1"><h3>Carga masiva de facturas y manifiestos</h3><div class="sub">IVZ Carbon identifica tipo, ubicación, período y consumo de cada documento. Revisalos y guardá.</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
+  <div class="modal-b">
+    ${drop}
+    ${rows.length?`<div class="tblwrap mt bulk-tbl"><table><colgroup><col class="c-chk"><col class="c-doc"><col class="c-kind"><col class="c-site"><col class="c-per"><col class="c-qty"><col class="c-det"><col class="c-st"><col class="c-x"></colgroup><thead><tr><th></th><th>Documento</th><th>Tipo</th><th>Ubicación</th><th>Período</th><th>Cantidad</th><th>Detalle</th><th>Estado</th><th></th></tr></thead><tbody>${body}</tbody></table></div>`:''}
+    <div class="note mt">${ico('info')} Se leen los PDF que tienen texto (los que genera el sistema del proveedor). Un escaneo o una foto solo se lee donde el servidor tiene OCR; si no, completá tipo, período y cantidad a mano en la fila. Dos facturas de la misma sede, energía y período se suman (por ejemplo, dos medidores).</div>
+  </div>
+  <div class="modal-f">${rows.length?'<button class="btn" onclick="bulkDiscard()">Descartar todo</button>':''}<span style="flex:1"></span>
+    <span class="tiny dim" style="align-self:center">${reading?'Leyendo '+reading+' de '+rows.length+'…':kinds}</span>
+    <button class="btn primary" ${reading||!ready.length?'disabled':''} onclick="bulkSave()">Guardar ${ready.length||''} ${ready.length===1?'documento':'documentos'}</button></div>`;
+}
+function bulkSave(){
+  const b=S.bulk; if(!b) return;
+  const ready=b.rows.filter(r=>r.include&&r.status!=='error'&&!bulkIssues(r).length); if(!ready.length) return;
+  let kg=0, n=0; const groups=new Map();
+  ready.forEach(r=>{ if(r.kind==='waste'){
+      const rec=addWasteRecord(WCBI[r.stream],{period:r.period,qty:r.qty,date:r.date||r.period+'-01',operator:r.operator,doc:r.doc||undefined,treatment:r.treatment,detected:r.detected,site:r.site});
+      kg+=rec.kg; n++;
+    } else { const k=bulkKey(r); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(r); } });
+  groups.forEach(list=>{ const r0=list[0];
+    const rec=addInvoiceRecord(SBI[r0.site],r0.kind,{period:r0.period,qty:list.reduce((a,r)=>a+r.qty,0),provider:list.map(r=>r.provider).filter(Boolean)[0]||'',
+      doc:list.map(r=>r.doc).filter(Boolean).join(' + ')||undefined});
+    kg+=rec.kg; n+=list.length; });
+  // aprender los N° de cliente o suministro: solo los que en esta tanda aparecen en una única sede
+  const seen=new Map();
+  ready.forEach(r=>(r.hints.accounts||[]).forEach(a=>{ const d=bulkDigits(a); if(d.length<4) return; if(!seen.has(d)) seen.set(d,{raw:a,sites:new Set()}); seen.get(d).sites.add(r.site); }));
+  seen.forEach(({raw,sites},d)=>{ if(sites.size!==1) return; const site=SBI[[...sites][0]];
+    if(SITES.some(s=>s!==site&&(s.supply||[]).some(x=>bulkDigits(x)===d))) return;
+    site.supply=site.supply||[]; if(!site.supply.some(x=>bulkDigits(x)===d)&&site.supply.length<30) site.supply.push(raw); });
+  b.rows=b.rows.filter(r=>!ready.includes(r));
+  if(!b.rows.length) S.bulk=null;
+  closeModal(); render();
+  toast(n+(n===1?' documento guardado':' documentos guardados')+' → '+t(kg,3)+' tCO₂e.'+(S.bulk?(S.bulk.rows.length===1?' Queda 1 para revisar.':' Quedan '+S.bulk.rows.length+' para revisar.'):''),'✓');
 }
 
 
@@ -4295,7 +4469,7 @@ function recentTable(n=8){
 function openModal(html,opt={}){
   closeModal();
   const wrap=document.createElement('div'); wrap.className='mscrim'; wrap.id='mscrim';
-  wrap.innerHTML=`<div class="modal ${opt.wide?'wide':''} ${opt.narrow?'narrow':''}">${html}</div>`;
+  wrap.innerHTML=`<div class="modal ${opt.wide?'wide':''} ${opt.xwide?'xwide':''} ${opt.narrow?'narrow':''}">${html}</div>`;
   wrap.addEventListener('mousedown',e=>{ if(e.target===wrap) closeModal(); });
   document.body.appendChild(wrap);
   requestAnimationFrame(()=>wrap.classList.add('on'));
@@ -4894,8 +5068,9 @@ function dcPeriodicView(f){
   const movs=MOV.slice(-6).reverse();
   return `<div class="note" style="margin-bottom:16px">Cada planilla se importa con el mismo asistente de cinco pasos: elegir el tipo de dato, cargar el archivo, revisar el mapeo de columnas, validar fila por fila e importar. Las columnas se detectan automáticamente y el mapeo se puede guardar como perfil para el mes siguiente.</div>
   <div class="card" style="border-color:var(--accent-line);background:var(--accent-soft)"><div class="card-b" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-    <div style="flex:1;min-width:220px"><b>¿Es solo una factura o un manifiesto?</b><div class="tiny dim" style="margin-top:2px">No hace falta armar una planilla — subís el documento y revisás los datos antes de confirmar.</div></div>
-    <button class="btn sm" onclick="go('planta')">${ico('bolt')} Factura de electricidad o gas</button>
+    <div style="flex:1;min-width:220px"><b>¿Tenés facturas o manifiestos?</b><div class="tiny dim" style="margin-top:2px">No hace falta armar una planilla — subís los documentos, todos juntos o de a uno, y revisás los datos antes de confirmar.</div></div>
+    <button class="btn sm primary" onclick="openBulkDocs()">${ico('upload')} Varios documentos a la vez</button>
+    ${secOn('planta')?`<button class="btn sm" onclick="go('planta')">${ico('bolt')} Factura de electricidad o gas</button>`:''}
     <button class="btn sm" onclick="openManifestModal()">${ico('upload')} Manifiesto de residuos</button>
   </div></div>
   ${groups.map(([g,items])=>`<div class="card mt"><div class="card-h"><h3>${g}</h3></div><div class="card-b"><div class="grid g3">
@@ -4972,41 +5147,43 @@ const TOUR=[
 
  {target:'[data-tour="corp-a3-table"]',placement:'right',title:'El inventario completo, navegable',
   body:'Alcances, subcategorías y las 15 categorías de Alcance 3 en una sola tabla. Cada fila es un clic hacia sus registros, sus sitios y su evolución mensual.',
-  before(){go('corporativo','res')}},
+  before(){go('corporativo','res')},sec:'corporativo'},
 
  {target:'[data-tour="inv-cards"]',placement:'bottom',title:'Alcance 1: de dónde sale cada tonelada',
   body:'Combustión estacionaria, móvil, emisiones de proceso y fugitivas, con su participación, cantidad de registros, tendencia y principal fuente. Clic en una tarjeta y baja al detalle.',
-  before(){go('corporativo','1')}},
+  before(){go('corporativo','1')},sec:'corporativo'},
 
  {target:'[data-tour="inv-s2method"]',placement:'left',title:'Alcance 2, con reporte dual',
   body:'El mismo kWh se informa <b>location-based</b> (factor promedio de la red) y <b>market-based</b> (instrumentos contractuales, I-REC). Las pérdidas de transmisión no van acá: son Alcance 3, categoría 3, calculadas sobre ese mismo dato sin duplicarlo.',
-  before(){go('corporativo','2')}},
+  before(){go('corporativo','2')},sec:'corporativo'},
 
  {target:'[data-tour="loc-cards"]',placement:'top',title:'De la factura al Alcance 1 o 2, en un paso',
   body:'Todas las sedes en un solo lugar. Subir la factura de electricidad o de gas de una ubicación calcula su emisión al instante y reemplaza cualquier estimación anterior del mismo período — nunca se duplica.',
-  before(){closeModal();go('planta')}},
+  before(){closeModal();go('planta')},sec:'planta'},
 
  {target:'[data-tour="mov-map"]',placement:'top',wait:520,title:'Cada insumo y cada viaje, con su ruta real',
   body:'Los movimientos del ERP se cruzan con la guía del TMS: peso, tramos, modo y kilómetros. La emisión es <b>t × km × factor del modo</b>, tramo por tramo. Si el camión es propio, la emisión se reconoce en Alcance 1 y no se duplica en la Categoría 4.',
-  before(){closeDrawer();S.mv.sel=null;S.mv.f={...MV_F0};S.mob.sel=null;go('movilidad')}},
+  before(){closeDrawer();S.mv.sel=null;S.mv.f={...MV_F0};S.mob.sel=null;go('movilidad')},sec:'movilidad'},
 
  {target:'[data-tour="tx-rules"]',placement:'left',title:'Reglas de clasificación, no criterio manual',
   body:'Un grupo de material, una cuenta contable o una guía de transporte alcanzan para asignar alcance, categoría, método y factor, con un nivel de confianza. Por debajo del umbral, la transacción espera confirmación.',
-  before(){S.txf={sys:'all',cat:'all',scope:'all',state:'all',rule:'all',src:'all',q:''};go('transacciones')}},
+  before(){S.txf={sys:'all',cat:'all',scope:'all',state:'all',rule:'all',src:'all',q:''};go('transacciones')},sec:'transacciones'},
 
  {target:'#drawer',placement:'left',wait:380,title:'Del resultado hasta el comprobante',
-  body:'Resultado, clasificación, aritmética, factor con su fuente, dato de actividad, documento de origen y quién lo cargó. Nada del cálculo se pierde en el camino.<br><br><b>'+TOUR_MSG+'</b><br><br>El detalle de qué es funcional y qué está simulado está en «Alcance del prototipo». A partir de acá, es tuyo para explorar.',
+  body:'Resultado, clasificación, aritmética, factor con su fuente, dato de actividad, documento de origen y quién lo cargó. Nada del cálculo se pierde en el camino.<br><br><b>'+TOUR_MSG+'</b><br><br>A partir de acá, es tuyo para explorar.',
   before(){const r=tourFindRec(x=>x.type==='transport')||tourFindRec(x=>x.type==='elec')||REC[0];trace(r.rid)}},
 ];
 
+/* los pasos de secciones que el administrador ocultó para la cuenta no se muestran */
+function tourSteps(){return TOUR.filter(st=>!st.sec||secOn(st.sec))}
 function tourStart(){S.tour.active=true;S.tour.step=0;tourShow(0)}
 function tourEnd(){S.tour.active=false;tourClearFrame();closeDrawer();render()}
-function tourNext(){if(S.tour.step>=TOUR.length-1){tourEnd();return}tourShow(S.tour.step+1)}
+function tourNext(){if(S.tour.step>=tourSteps().length-1){tourEnd();return}tourShow(S.tour.step+1)}
 function tourPrev(){if(S.tour.step<=0)return;tourShow(S.tour.step-1)}
 function tourRestart(){tourStart()}
 
 function tourShow(i){
-  S.tour.step=i;const st=TOUR[i];
+  S.tour.step=i;const st=tourSteps()[i];
   if(st.before){try{st.before()}catch(e){}}
   tourClearFrame();
   setTimeout(()=>tourPaint(),st.wait!=null?st.wait:220);
@@ -5016,8 +5193,8 @@ function tourClearFrame(){document.querySelectorAll('.tf,.tour-hl,.tour-card,.to
 function tourPaint(){
   if(!S.tour.active)return;
   tourClearFrame();
-  const st=TOUR[S.tour.step];
-  const n=TOUR.length,i=S.tour.step;
+  const steps=tourSteps(),st=steps[S.tour.step];
+  const n=steps.length,i=S.tour.step;
   const nav=(label,fn,primary,disabled)=>`<button class="btn ${primary?'primary':''} sm" ${disabled?'disabled':''} onclick="${fn}">${label}</button>`;
   const cardInner=`
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">

@@ -232,6 +232,7 @@
       const [result,user]=await Promise.all([loadInventory(),api('/api/me'),loadClosures()]);
       company=user.company;
       username=user.username;
+      if(user.features)FEATURES=user.features;  // secciones e integraciones habilitadas por el administrador
       impersonating=!!user.impersonating;
       document.getElementById('profile-name').textContent=username;
       document.getElementById('profile-company').textContent=company;

@@ -17,7 +17,8 @@ from backend.manage import create_user
 from backend.metrics import compute, normalize
 from backend.storage import db, database_url, decode
 from backend.security import hash_password, verify_password
-from backend import matching
+from backend import features, matching
+from backend.invoice_parser import parse_document
 from backend.storage import Session
 
 SEED = json.loads((ROOT/'seed.json').read_text(encoding='utf8'))
@@ -114,6 +115,35 @@ class MatchingTests(unittest.TestCase):
                     self.assertAlmostEqual(pg['s'], matching.similarity(ka, kb), places=6)
                     self.assertAlmostEqual(pg['w'], matching.strict_word_similarity(ka, kb), places=6)
             conn.rollback()
+
+
+class DocumentReadingTests(unittest.TestCase):
+    """Bulk upload: the server tells what each document is and what points to its site."""
+    BILL = ('EDENOR S.A. Liquidación de Servicio Público N° 0123-45678901\nNº de Cliente: 0012345678   NIS 4455667\n'
+            'Domicilio de suministro: Av. del Libertador 4820, Vicente López\nPeríodo de consumo: 01/08/2025 AL 31/08/2025\nTotal Consumo 16.814,84 kWh')
+    GAS = 'METROGAS\nConsumo total en m3: 312\nPERÍODO DE LIQUIDACIÓN: 01/07/2025 A 31/07/2025\nCuenta: 11-2233445-6'
+    MANIFEST = ('MANIFIESTO DE TRANSPORTE DE RESIDUOS N° 48211\nGenerador: Planta Vicente López\nTransportista: Ecoprotec S.A.\n'
+                'Fecha de retiro: 15/08/2025\nResiduo: Chatarra y viruta metálica. Peso neto: 6.800 kg. Tratamiento: reciclaje')
+
+    def read(self, text, method='pdf-text'):
+        with patch('backend.invoice_parser.extract_text', return_value=(text, method)):
+            return parse_document(b'', 'documento.pdf', 'auto')
+
+    def test_kind_period_quantity_and_location_hints(self):
+        bill, gas, manifest = self.read(self.BILL), self.read(self.GAS), self.read(self.MANIFEST)
+        self.assertEqual((bill['kind'], bill['fields']['period'], bill['fields']['qty']), ('elec', '2025-08', 16814.84))
+        self.assertEqual(bill['hints']['accounts'], ['0012345678', '4455667'])
+        self.assertIn('Av. del Libertador 4820', bill['hints']['addresses'][0])
+        self.assertEqual((gas['kind'], gas['fields']['period'], gas['fields']['qty'], gas['hints']['accounts']), ('gas', '2025-07', 312.0, ['11-2233445-6']))
+        self.assertEqual((manifest['kind'], manifest['fields']['date'], manifest['fields']['qty'], manifest['fields']['doc'], manifest['fields']['treatment']),
+                         ('waste', '2025-08-15', 6800.0, '48211', 'reciclaje'))
+
+    def test_unreadable_or_unknown_documents_ask_for_manual_data(self):
+        self.assertEqual(self.read('', 'ocr-unavailable')['ok'], False)
+        unknown = self.read('Recibo de sueldo de agosto')
+        self.assertEqual((unknown['ok'], unknown['kind']), (False, None))
+        with self.assertRaises(ValueError):
+            parse_document(b'', 'x.pdf', 'other')
 
 
 class ApiTests(unittest.TestCase):
@@ -471,6 +501,49 @@ class ApiTests(unittest.TestCase):
         before=self.paged();after=copy.deepcopy(before['state'])
         next(r for r in after['REC'] if r['p'].startswith('2024'))['fm']={'pct':140}
         self.assertEqual(self.client.post('/api/state/changes',headers=self.h,json=self.diff(before,after)).status_code,422)
+
+    def test_admin_switches_sections_and_integrations_per_account(self):
+        create_user('three','Empresa tres','test-password-123')
+        with db() as s:
+            s.execute("UPDATE carbon_accounts SET role='admin' WHERE username='two'")
+            one=s.execute("SELECT id FROM carbon_accounts WHERE username='one'").fetchone()['id']
+            three=s.execute("SELECT id FROM carbon_accounts WHERE username='three'").fetchone()['id']
+        settings=f'/api/admin/accounts/{one}/settings'
+        self.login(); self.initialize()
+        me=self.client.get('/api/me').json()['features']
+        self.assertFalse(me['sections']['energia'])  # hidden until an administrator turns it on
+        self.assertTrue(me['sections']['reportes'] and me['integrations']['hub'])
+        auth={'Authorization':'Bearer '+self.client.post('/api/tokens',headers=self.h,json={'label':'Hub'}).json()['token']}
+        self.assertEqual(self.client.put(settings,headers=self.h,json={'sections':{'energia':True}}).status_code,403)
+        self.login('two')
+        cfg=self.client.get(settings).json()
+        self.assertEqual((len(cfg['tokens']),next(x for x in cfg['sections'] if x['key']=='energia')['on']),(1,False))
+        for bad in ({'sections':{'dash':False}},{'integrations':{'nope':True}},{'sections':{'energia':'si'}}):
+            self.assertEqual(self.client.put(settings,headers=self.h,json=bad).status_code,422)
+        r=self.client.put(settings,headers=self.h,json={'sections':{'energia':True,'reportes':False},'integrations':{'hub':False,'sap':False}})
+        self.assertEqual(r.status_code,200,r.text)
+        self.assertEqual(self.client.post(f'/api/admin/accounts/{one}/tokens',headers=self.h,json={'label':'Hub'}).status_code,403)
+        # The client sees the change and the server enforces it.
+        self.login()
+        me=self.client.get('/api/me').json()['features']
+        self.assertEqual((me['sections']['energia'],me['sections']['reportes'],me['integrations']['sap']),(True,False,False))
+        self.assertEqual(self.client.get('/api/reports').status_code,403)
+        self.assertEqual(self.client.get('/api/tokens').status_code,403)
+        with TestClient(app) as anon:
+            self.assertEqual(anon.get('/api/link/sites',headers=auth).status_code,403)
+        with db() as s:
+            self.assertEqual(features.of(s,three),features.parse('{}'))  # other accounts keep the defaults
+        # Back on: the old token works again; the administrator mints and revokes tokens for the client.
+        self.login('two')
+        self.client.put(settings,headers=self.h,json={'integrations':{'hub':True}})
+        minted={'Authorization':'Bearer '+self.client.post(f'/api/admin/accounts/{one}/tokens',headers=self.h,json={'label':'Hub'}).json()['token']}
+        with TestClient(app) as anon:
+            self.assertEqual(anon.get('/api/link/sites',headers=auth).status_code,200)
+            self.assertEqual(anon.get('/api/link/sites',headers=minted).status_code,200)
+            tokens=self.client.get(settings).json()['tokens']
+            self.assertEqual(len(tokens),2)
+            for t in tokens:self.client.delete(f'/api/admin/accounts/{one}/tokens/{t["id"]}',headers=self.h)
+            self.assertEqual(anon.get('/api/link/sites',headers=minted).status_code,401)
 
     def test_vercel_database_configuration(self):
         with patch.dict(os.environ, {'VERCEL':'1','DATABASE_URL':'postgresql://integration-test'}):
