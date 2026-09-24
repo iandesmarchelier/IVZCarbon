@@ -42,6 +42,10 @@ Se conserva `iniciar-local.ps1` como alternativa explícita SQLite de pruebas. S
 
 ## Funcionalidad
 
+- Reportes anuales ISO 14064-1: en Reportes, seleccionar año y sitios y pulsar «Generar reporte anual». Completar el contexto metodológico (se reutilizan los textos del último informe), generar una versión calculada por el servidor y abrir su vista con portada, gráficos SVG, tablas y formato A4. «Imprimir / Guardar PDF» utiliza el diálogo del navegador. El historial conserva resultados y textos por empresa. La aprobación interna exige resolver datos demo, asignaciones pendientes y campos descriptivos; no acredita conformidad ni verificación externa. El informe identifica brechas, presenta energía por ubicación y los factores seleccionados sin atribuir automáticamente cumplimiento market-based, y propone una clasificación ISO que requiere revisión metodológica.
+
+  Los textos se reutilizan únicamente dentro del mismo perímetro; los borradores de la pantalla se separan por año y sitio. El historial muestra la aprobación interna. Los meses sin registros se identifican como «Sin datos» también en los gráficos. Para años cerrados se conserva la incertidumbre consolidada del cierre; la incertidumbre histórica por sitio se declara no disponible porque los cierres existentes no guardan ese detalle. Los campos que solo contienen espacios se consideran pendientes.
+
 - Login con contraseña scrypt, cookie HttpOnly, expiración de 8 horas y límite de intentos.
 - Una cuenta independiente por empresa; cada consulta filtra por la cuenta autenticada.
 - Elección inicial entre inventario vacío y demo. Guardado automático silencioso cada 3 segundos y aviso al salir con cambios pendientes. Sin barra inferior de guardado; los errores muestran un aviso con opción de descargar un respaldo.

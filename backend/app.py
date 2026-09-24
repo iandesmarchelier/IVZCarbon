@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from .invoice_parser import parse_document
-from . import inventory, matching
+from . import inventory, matching, reports
 from .security import hash_password, verify_password, token_hash
 from .storage import db, initialize, decode, database_url, event
 
@@ -224,6 +224,37 @@ def summary(request: Request, year: int | None = None, site: str | None = None):
 @app.get('/api/closures')
 def list_closures(request: Request):
     return inventory.closures(account(request)['id'])
+
+
+@app.post('/api/reports')
+def generate_report(body: reports.ReportRequest, request: Request):
+    return reports.create(account(request), body)
+
+
+@app.get('/api/reports')
+def report_history(request: Request):
+    return reports.history(account(request)['id'])
+
+
+@app.get('/api/reports/{report_id}')
+def report_data(report_id: str, request: Request):
+    return reports.get(account(request)['id'], report_id)
+
+
+@app.post('/api/reports/{report_id}/approve')
+def approve_report(report_id: str, request: Request):
+    return reports.approve(account(request), report_id)
+
+
+@app.get('/reports/{report_id}', response_class=HTMLResponse)
+def report_document(report_id: str, request: Request):
+    return reports.render(reports.get(account(request)['id'], report_id))
+
+
+@app.get('/reports.js')
+def reports_js(request: Request):
+    account(request)
+    return FileResponse(ROOT / 'static/reports.js', media_type='text/javascript')
 
 
 class CloseYear(BaseModel):

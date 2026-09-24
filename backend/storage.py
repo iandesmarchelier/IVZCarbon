@@ -79,6 +79,7 @@ def initialize():
         for sql in [
             'CREATE TABLE IF NOT EXISTS carbon_schema (version INTEGER PRIMARY KEY)',
             'CREATE TABLE IF NOT EXISTS carbon_accounts (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, company TEXT NOT NULL, password TEXT NOT NULL)',
+            f'CREATE TABLE IF NOT EXISTS carbon_reports (id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, year INTEGER NOT NULL, created TEXT NOT NULL, body {j} NOT NULL)',
             'CREATE TABLE IF NOT EXISTS carbon_sessions (token TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, expires DOUBLE PRECISION NOT NULL)',
             'CREATE TABLE IF NOT EXISTS carbon_login_limits (username TEXT PRIMARY KEY, attempts INTEGER NOT NULL, reset_at DOUBLE PRECISION NOT NULL)',
             f'CREATE TABLE IF NOT EXISTS carbon_states (account TEXT PRIMARY KEY REFERENCES carbon_accounts(id), revision INTEGER NOT NULL, body {j} NOT NULL, updated TEXT NOT NULL)',

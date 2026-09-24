@@ -164,6 +164,55 @@ class ApiTests(unittest.TestCase):
         self.initialize('empty')
         self.assertEqual(self.client.get('/api/summary').json()['count'],0)
 
+    def test_annual_report_snapshot_and_tenant_isolation(self):
+        self.assertEqual(self.client.get('/api/reports').status_code,401)
+        self.login(); body=self.initialize()
+        response=self.client.post('/api/reports',headers=self.h,json={'year':2025,'notes':{'activity':'<script>alert(1)</script>'}})
+        self.assertEqual(response.status_code,200,response.text)
+        report=response.json(); rid=report['id']
+        summary=self.client.get('/api/summary?year=2025').json()
+        self.assertAlmostEqual(report['result']['locationKg'],summary['locationKg'])
+        self.assertAlmostEqual(sum(report['iso'].values()),summary['locationKg'])
+        self.assertEqual(len(report['months']),12)
+        document=self.client.get('/reports/'+rid)
+        self.assertEqual(document.status_code,200)
+        self.assertIn('&lt;script&gt;alert(1)&lt;/script&gt;',document.text)
+        self.assertNotIn('<script>alert(1)</script>',document.text)
+        self.assertIn('window.print()',document.text)
+        body['state']['REC'][0]['qty']*=2
+        self.assertEqual(self.client.put('/api/state',headers=self.h,json=body).status_code,200)
+        self.assertEqual(self.client.get('/api/reports/'+rid).json(),report)
+        self.assertEqual(len(self.client.get('/api/reports').json()),1)
+        self.login('two')
+        self.assertEqual(self.client.get('/api/reports').json(),[])
+        self.assertEqual(self.client.get('/api/reports/'+rid).status_code,404)
+        self.assertEqual(self.client.get('/reports/'+rid).status_code,404)
+
+    def test_annual_report_boundaries_and_validation(self):
+        self.login();self.initialize()
+        for payload in ({'year':1899},{'year':2025,'site':'other'},{'year':2199},{'year':2025,'notes':{'unknown':'x'}}):
+            self.assertEqual(self.client.post('/api/reports',headers=self.h,json=payload).status_code,422)
+        report=self.client.post('/api/reports',headers=self.h,json={'year':2025,'site':'S1'}).json()
+        self.assertEqual(len(report['sites']),1)
+        self.assertAlmostEqual(report['result']['locationKg'],self.client.get('/api/summary?year=2025&site=S1').json()['locationKg'])
+        self.assertIn('No informado',self.client.get('/reports/'+report['id']).text)
+
+    def test_annual_report_approval(self):
+        from backend.reports import FIELDS
+        self.login();body=self.initialize()
+        draft=self.client.post('/api/reports',headers=self.h,json={'year':2025}).json()
+        self.assertEqual(self.client.post('/api/reports/'+draft['id']+'/approve',headers=self.h).status_code,422)
+        body['state']['demoRecordIds']=[]
+        self.assertEqual(self.client.put('/api/state',headers=self.h,json=body).status_code,200)
+        report=self.client.post('/api/reports',headers=self.h,json={'year':2025,'notes':{k:'Declaración revisada de prueba' for k in FIELDS}}).json()
+        response=self.client.post('/api/reports/'+report['id']+'/approve',headers=self.h)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertTrue(response.json()['approvedAt'])
+        self.assertEqual(response.json()['result'],report['result'])
+        self.assertIn('Aprobado internamente',self.client.get('/reports/'+report['id']).text)
+        self.login('two')
+        self.assertEqual(self.client.post('/api/reports/'+report['id']+'/approve',headers=self.h).status_code,404)
+
     def test_atomic_invalid_save_and_exports(self):
         self.login();body=self.initialize()
         body['state']['REC'][0]['qty']=-3

@@ -3254,9 +3254,9 @@ V.factores=f=>{
 
 /* ---------------------------- 10. Reportes ------------------------------ */
 V.reportes=f=>{
-  const year=f.year==='all'?2025:+f.year;
+  const year=f.year==='all'?(PERIODS.length?Math.max(...PERIODS.map(p=>+p.slice(0,4))):new Date().getFullYear()):+f.year;
   const ps=PERIODS.filter(p=>p.startsWith(year));
-  const now='2025-12';
+  const now=new Date().toISOString().slice(0,7);
   const rsY=REC.filter(r=>r.p.startsWith(year)&&(f.site==='all'||r.site===f.site));
   const sc=byScope(rsY), tot=sum(rsY), ck=byCatKey(rsY);
   const au=autoShare(rsY);
@@ -3266,7 +3266,7 @@ V.reportes=f=>{
                 {n:'Alcance 3',c:C.s3,v:ps.map(p=>sum(rsY.filter(r=>r.p===p&&r.scope===3)))}];
   return head('Reportes','Huella de Carbono Corporativa — emisión mensual y anual del inventario según GHG Protocol e ISO 14064-1, con exportación a Excel y PDF.',
     `<button class="btn" onclick="exportInventoryXLSX(S.f)">${ico('download')} Exportar inventario (XLSX)</button>
-     <button class="btn primary" onclick="toast('Generación simulada del informe anual de Huella de Carbono Corporativa ${year}.','↧')">Generar reporte anual ${year}</button>`)
+     <button class="btn" onclick="carbonReportHistory()">Historial de reportes</button><button class="btn primary" onclick="generateCarbonReport(${year})">Generar reporte anual ${year}</button>`)
   +`<div class="card" data-tour="rep-cover"><div class="card-h"><h3>Huella de Carbono Corporativa ${year}</h3><div class="sub">${f.site==='all'?'consolidado de todos los sitios':SBI[f.site].name} · límites organizacionales por control operacional</div></div>
      <div class="card-b"><div class="grid g4">
        ${kpi('Emisiones totales',t(tot,1),' tCO₂e','<span class="dim tiny">año '+year+'</span>',{icon:'leaf'})}
@@ -3277,15 +3277,15 @@ V.reportes=f=>{
      <div class="mt">${stacked(ps.map(p=>MONTHS[+p.slice(5)-1]),series.map(s=>({...s,key:s.n})),{year})}</div>
      </div></div>
    <div class="grid g23 mt">
-     <div class="card" data-tour="rep-table"><div class="card-h"><h3>Reportes mensuales ${year}</h3><div class="sub">un cierre por período, con su estado de emisión</div></div><div class="card-b tight">
+     <div class="card" data-tour="rep-table"><div class="card-h"><h3>Reportes mensuales ${year}</h3><div class="sub">datos mensuales disponibles para el informe anual</div></div><div class="card-b tight">
        <table><thead><tr><th>Período</th><th class="r">A1</th><th class="r">A2</th><th class="r">A3</th><th class="r">tCO₂e</th><th class="r">% automático</th><th>Estado</th><th class="r">Acciones</th></tr></thead><tbody>
        ${ps.map(p=>{const r2=rsY.filter(r=>r.p===p),b=byScope(r2),v=sum(r2),a=autoShare(r2);
-         const st=p<now?'Emitido':p===now?'En revisión':'Pendiente';
+         const st=r2.length?'En revisión':'Pendiente';
          return `<tr><td class="strong">${pLabel(p)}</td>
          <td class="r num dim">${t(b[1],1)}</td><td class="r num dim">${t(b[2],1)}</td><td class="r num dim">${t(b[3],1)}</td>
          <td class="r num strong">${t(v,2)}</td><td class="r num dim">${v?nf(a.pctKg,0)+'%':'—'}</td>
          <td>${st==='Emitido'?'<span class="pill ok">Emitido</span>':st==='En revisión'?'<span class="pill warn">En revisión</span>':'<span class="pill">Pendiente</span>'}</td>
-         <td class="r">${st!=='Pendiente'?`<button class="btn sm ghost" onclick="toast('Descarga simulada del reporte de ${pLabel(p)}.','↧')">PDF</button><button class="btn sm ghost" onclick="exportInventoryXLSX({year:'${year}',month:'${p.slice(5)}',site:S.f.site})">XLSX</button>`:'<span class="dim tiny">—</span>'}</td></tr>`}).join('')}
+         <td class="r">${st!=='Pendiente'?`<button class="btn sm ghost" onclick="exportInventoryXLSX({year:'${year}',month:'${p.slice(5)}',site:S.f.site})">XLSX</button>`:'<span class="dim tiny">—</span>'}</td></tr>`}).join('')}
        </tbody><tfoot><tr><td>Año ${year}</td><td class="r num">${t(sc[1],1)}</td><td class="r num">${t(sc[2],1)}</td><td class="r num">${t(sc[3],1)}</td><td class="r num">${t(tot,1)}</td><td class="r num">${nf(au.pctKg,0)}%</td><td colspan="2"></td></tr></tfoot></table></div></div>
      <div>
        <div class="card"><div class="card-h"><h3>Contenido del informe GEI</h3><div class="sub">ISO 14064-1 · cláusula 9</div></div><div class="card-b tight">
@@ -3293,9 +3293,9 @@ V.reportes=f=>{
            ['Emisiones directas (Alcance 1) por gas y subcategoría',1],['Emisiones indirectas por energía importada, dual',1],
            ['Otras emisiones indirectas por categoría',2],['Metodologías de cuantificación por categoría',1],
            ['Factores de emisión, fuentes y versiones',1],['Origen y calidad del dato de actividad',1],['Incertidumbre',1],['Verificación independiente',0]]
-           .map(([n,s])=>`<tr><td>${n}</td><td class="r">${s===1?'<span class="pill ok">Completo</span>':s===2?'<span class="pill warn">Parcial</span>':'<span class="pill">No iniciado</span>'}</td></tr>`).join('')}
+           .map(([n,s])=>`<tr><td>${n}</td><td class="r">${s===1?'<span class="pill">Revisar datos</span>':s===2?'<span class="pill warn">Completar</span>':'<span class="pill">Declarar estado</span>'}</td></tr>`).join('')}
          </tbody></table>
-         <div class="note" style="margin:12px">El Alcance 3 se reporta sobre ${CAT3_ON.length} categorías; las restantes quedan declaradas con su justificación de exclusión, no ocultas.</div></div></div>
+         <div class="note" style="margin:12px">El Alcance 3 se reporta sobre ${CAT3_ON.length} categorías; el reporte identifica las categorías sin registros para evaluar su aplicabilidad y documentar exclusiones.</div></div></div>
        <div class="card mt"><div class="card-h"><h3>Anexos del reporte</h3></div><div class="card-b tight"><table><tbody>
          <tr><td>Inventario por alcance y categoría</td><td class="r num tiny">${nf(Object.keys(ck).length)} líneas</td></tr>
          <tr><td>Detalle de registros con su factor</td><td class="r num tiny">${nf(rsY.length)}</td></tr>
@@ -5090,5 +5090,5 @@ document.addEventListener('keydown',e=>{
 /* arranque */
 // La conexión al backend carga el inventario antes de renderizar.
 </script>
-<script src="/bridge.js"></script></body>
+<script src="/bridge.js"></script><script src="/reports.js"></script></body>
 </html>
