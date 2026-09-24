@@ -28,7 +28,7 @@ def store(account, name, data):
         return None
     now = time.time()
     doc_id = uuid.uuid4().hex
-    with db() as s:
+    with db(account) as s:
         s.execute('DELETE FROM carbon_documents WHERE account=? AND NOT linked AND created<?', (account, now - ORPHAN_TTL))
         s.execute('INSERT INTO carbon_documents (id,account,name,type,size,created,linked,data) VALUES (?,?,?,?,?,?,?,?)',
                   (doc_id, account, (name or 'documento')[:200], media, len(data), now, False, data))
@@ -46,7 +46,7 @@ def link(s, account, records):
 
 
 def open_document(account, doc_id):
-    with db() as s:
+    with db(account) as s:
         row = s.execute('SELECT name,type,data FROM carbon_documents WHERE account=? AND id=?', (account, doc_id)).fetchone()
     if not row:
         raise HTTPException(404, 'El documento no está disponible.')

@@ -1,11 +1,26 @@
-"""PostgreSQL storage. SQLite is available only when explicitly selected for local tests."""
+"""PostgreSQL storage. SQLite is available only when explicitly selected for local tests.
+
+Tenant isolation. Every connection says whose data it works on: db(account_id) for a client's
+request, db(SYSTEM) for login, the administrator and maintenance scripts. On PostgreSQL,
+db(account_id) runs its transaction as TENANT_ROLE with ivz.account set to that id, and
+row-level security on every table with an account column (and on carbon_accounts itself) hides
+and refuses the other accounts' rows, even if a query forgets its WHERE account=?. db(SYSTEM)
+runs as the connecting role, which owns the tables and is not subject to the policies.
+SQLite has no row-level security; the argument is required anyway.
+"""
 import json
+import logging
 import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+SYSTEM = object()
+TENANT_ROLE = 'ivz_carbon_tenant'
+# Whether the connecting role can switch to TENANT_ROLE; None until checked in this process.
+_tenant_role = {'ready': None}
 
 
 class Session:
@@ -41,12 +56,17 @@ def event(s, user, action, revision, details):
 
 
 @contextmanager
-def db():
+def db(account, repeatable=False):
+    """repeatable: one consistent view of the data for the whole transaction (long downloads)."""
+    if account is not SYSTEM and not (isinstance(account, str) and account):
+        raise ValueError('db() needs the account id, or SYSTEM')
     url = database_url()
     if url:
         import psycopg
         from psycopg.rows import dict_row
         conn = psycopg.connect(url, row_factory=dict_row, connect_timeout=10)
+        if repeatable:
+            conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
     else:
         path = os.getenv('CARBON_SQLITE_PATH')
         if not path or os.getenv('CARBON_ENV') == 'production' or os.getenv('VERCEL'):
@@ -56,6 +76,8 @@ def db():
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA foreign_keys=ON')
     try:
+        if url and account is not SYSTEM:
+            _enter(conn, account)
         yield Session(conn, bool(url))
         conn.commit()
     except Exception:
@@ -65,13 +87,31 @@ def db():
         conn.close()
 
 
+def _enter(conn, account):
+    """Scope the transaction to one account. Both settings are transaction-local (SET LOCAL), so a
+    pooled connection (Neon's pgbouncer) never carries them into someone else's transaction."""
+    if _tenant_role['ready'] is None:
+        _tenant_role['ready'] = bool(conn.execute(
+            'SELECT 1 FROM pg_roles r WHERE r.rolname=%s AND pg_has_role(current_user, r.oid, %s)',
+            (TENANT_ROLE, _switch(conn))).fetchone())
+    if _tenant_role['ready']:
+        conn.execute("SELECT set_config('role', %s, true), set_config('ivz.account', %s, true)", (TENANT_ROLE, account))
+    else:
+        conn.execute("SELECT set_config('ivz.account', %s, true)", (account,))
+
+
+def _switch(conn):
+    # Since PostgreSQL 16 a role's creator holds ADMIN on it but may still lack SET, which SET ROLE needs.
+    return 'SET' if conn.info.server_version >= 160000 else 'MEMBER'
+
+
 def database_url():
     # Vercel's PostgreSQL integration provides DATABASE_URL in this project's scope.
     return os.getenv('CARBON_DATABASE_URL') or (os.getenv('DATABASE_URL') if os.getenv('VERCEL') else None)
 
 
 def initialize():
-    with db() as s:
+    with db(SYSTEM) as s:
         # Serialize schema creation across workers on PostgreSQL.
         if s.postgres:
             s.execute('SELECT pg_advisory_xact_lock(8347021)')
@@ -109,6 +149,48 @@ def initialize():
         # Row order inside the inventory: records and movements are stored as rows, not inside the state body.
         _ensure_column(s, 'carbon_records', 'seq', 'seq INTEGER')
         _ensure_column(s, 'carbon_entities', 'seq', 'seq INTEGER')
+        if s.postgres:
+            isolate(s, 'carbon_accounts')
+
+
+def isolate(s, accounts_table):
+    """Row-level security for every table with an account column, found in the schema so that a new
+    table is covered without being listed, plus the accounts table on its id. Only changes what is
+    missing: ALTER TABLE locks the table, and this runs on every cold start."""
+    tables = {r['table_name']: 'account' for r in s.execute(
+        "SELECT DISTINCT table_name FROM information_schema.columns WHERE table_schema=current_schema() AND column_name='account'").fetchall()}
+    tables[accounts_table] = 'id'
+    secured = {r['relname'] for r in s.execute(
+        'SELECT relname FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relrowsecurity').fetchall()}
+    policies = {r['tablename'] for r in s.execute(
+        "SELECT tablename FROM pg_policies WHERE schemaname=current_schema() AND policyname='tenant'").fetchall()}
+    for table, column in sorted(tables.items()):
+        if table not in policies:
+            # USING also checks inserted and updated rows: an account cannot write rows for another.
+            s.execute(f"CREATE POLICY tenant ON {table} USING ({column} = current_setting('ivz.account', true))")
+        if table not in secured:
+            s.execute(f'ALTER TABLE {table} ENABLE ROW LEVEL SECURITY')
+    # The table owner (the connecting role) is exempt from the policies, so requests switch to a role
+    # that is not. It may only read and write the protected tables.
+    s.execute('SAVEPOINT tenant_role')
+    try:
+        if not s.execute('SELECT 1 FROM pg_roles WHERE rolname=?', (TENANT_ROLE,)).fetchone():
+            s.execute(f'CREATE ROLE {TENANT_ROLE} NOLOGIN NOBYPASSRLS')
+        if not s.execute('SELECT pg_has_role(current_user, ?, ?) AS ok', (TENANT_ROLE, _switch(s.conn))).fetchone()['ok']:
+            s.execute(f'GRANT {TENANT_ROLE} TO CURRENT_USER')
+        missing = [r['relname'] for r in s.execute(
+            'SELECT relname FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relname=ANY(?) AND NOT ('
+            + ' AND '.join(f"has_table_privilege(?, oid, '{p}')" for p in ('SELECT', 'INSERT', 'UPDATE', 'DELETE')) + ') ORDER BY relname',
+            (sorted(tables), *[TENANT_ROLE] * 4)).fetchall()]
+        if missing:
+            s.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {', '.join(missing)} TO {TENANT_ROLE}")
+        s.execute('RELEASE SAVEPOINT tenant_role')
+        _tenant_role['ready'] = True
+    except Exception:
+        s.execute('ROLLBACK TO SAVEPOINT tenant_role')
+        _tenant_role['ready'] = False
+        logging.getLogger(__name__).exception(
+            'Row-level security is NOT enforced: the database role cannot create or use %s.', TENANT_ROLE)
 
 
 def _column_exists(s, table, column):

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from .invoice_parser import parse_document
 from . import documents, features, inventory, matching, reports
 from .security import hash_password, verify_password, token_hash
-from .storage import db, initialize, decode, database_url, event
+from .storage import SYSTEM, db, initialize, decode, database_url, event
 
 ROOT = Path(__file__).resolve().parent.parent
 DUMMY = hash_password('not-a-real-account')
@@ -26,7 +26,7 @@ DUMMY = hash_password('not-a-real-account')
 @asynccontextmanager
 async def lifespan(app):
     initialize()
-    with db() as s:
+    with db(SYSTEM) as s:
         matching.enable(s)
     bootstrap_account()
     yield
@@ -52,7 +52,7 @@ async def guard(request: Request, call_next):
 
 
 def account(request):
-    with db() as s:
+    with db(SYSTEM) as s:
         row = s.execute('SELECT a.id,a.username,a.company,a.role,a.active,t.impersonated_by FROM carbon_accounts a JOIN carbon_sessions t ON t.account=a.id WHERE t.token=? AND t.expires>?',
                         (token_hash(request.cookies.get('ivz_carbon_session', '')), time.time())).fetchone()
     if not row or not row['active']:
@@ -73,7 +73,7 @@ def account_by_token(request):
     token = header[7:] if header.lower().startswith('bearer ') else ''
     if not token:
         return None
-    with db() as s:
+    with db(SYSTEM) as s:
         row = s.execute('SELECT a.id,a.username,a.company,a.settings FROM carbon_accounts a JOIN carbon_api_tokens t ON t.account=a.id WHERE t.token_hash=? AND a.active',
                         (token_hash(token),)).fetchone()
         if row and not features.parse(row['settings'])['integrations']['hub']:
@@ -92,12 +92,12 @@ def bootstrap_account():
     now = datetime.now(timezone.utc).isoformat()
     digest = os.getenv('CARBON_BOOTSTRAP_PASSWORD_HASH')
     if digest:
-        with db() as s:
+        with db(SYSTEM) as s:
             s.execute("INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?) ON CONFLICT(username) DO NOTHING",
                       (str(uuid.uuid4()), 'demo', 'IVZ Carbon', digest, 'client', True, now))
     admin_digest = os.getenv('CARBON_ADMIN_PASSWORD_HASH')
     if admin_digest:
-        with db() as s:
+        with db(SYSTEM) as s:
             s.execute("INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?) ON CONFLICT(username) DO NOTHING",
                       (str(uuid.uuid4()), 'admin', 'Administración IVZ Carbon', admin_digest, 'admin', True, now))
 
@@ -110,7 +110,7 @@ class Login(BaseModel):
 @app.post('/api/login')
 def login(body: Login, response: Response):
     name, now = body.username.strip().lower(), time.time()
-    with db() as s:
+    with db(SYSTEM) as s:
         limits = s.execute('INSERT INTO carbon_login_limits VALUES (?,1,?) ON CONFLICT(username) DO UPDATE SET '
             'attempts=CASE WHEN carbon_login_limits.reset_at<? THEN 1 ELSE carbon_login_limits.attempts+1 END, '
             'reset_at=CASE WHEN carbon_login_limits.reset_at<? THEN ? ELSE carbon_login_limits.reset_at END RETURNING attempts',
@@ -124,7 +124,7 @@ def login(body: Login, response: Response):
     if not user['active']:
         raise HTTPException(403, 'Esta cuenta fue desactivada.')
     token = secrets.token_urlsafe(32)
-    with db() as s:
+    with db(SYSTEM) as s:
         s.execute('DELETE FROM carbon_sessions WHERE expires<?', (now,))
         s.execute('INSERT INTO carbon_sessions (token,account,expires) VALUES (?,?,?)', (token_hash(token), user['id'], now+28800))
         s.execute('DELETE FROM carbon_login_limits WHERE username=?', (name,))
@@ -136,7 +136,7 @@ def login(body: Login, response: Response):
 
 @app.post('/api/logout')
 def logout(request: Request, response: Response):
-    with db() as s:
+    with db(SYSTEM) as s:
         s.execute('DELETE FROM carbon_sessions WHERE token=?', (token_hash(request.cookies.get('ivz_carbon_session', '')),))
     response.delete_cookie('ivz_carbon_session')
     return {'ok': True}
@@ -145,7 +145,7 @@ def logout(request: Request, response: Response):
 @app.get('/api/me')
 def me(request: Request):
     user = account(request)
-    with db() as s:
+    with db(user['id']) as s:
         switches = features.of(s, user['id'])
     return {'id': user['id'], 'username': user['username'], 'company': user['company'],
             'role': user['role'], 'impersonating': bool(user.get('impersonated_by')), 'features': switches}
@@ -154,14 +154,14 @@ def me(request: Request):
 def section_user(request, section):
     """The signed-in account, provided the administrator left this section visible for it."""
     user = account(request)
-    with db() as s:
+    with db(user['id']) as s:
         features.require(s, user['id'], 'sections', section, 'Esta sección no está habilitada para tu cuenta.')
     return user
 
 
 def hub_user(request):
     user = account(request)
-    with db() as s:
+    with db(user['id']) as s:
         features.require(s, user['id'], 'integrations', 'hub', 'La integración con IVZ Sustainability Hub está desactivada para esta cuenta.')
     return user
 
@@ -346,21 +346,21 @@ def tokens_of(s, account_id):
 @app.post('/api/tokens')
 def create_token(body: TokenCreate, request: Request):
     user = hub_user(request)
-    with db() as s:
+    with db(user['id']) as s:
         return {'token': new_token(s, user['id'], body.label)}
 
 
 @app.get('/api/tokens')
 def list_tokens(request: Request):
     user = hub_user(request)
-    with db() as s:
+    with db(user['id']) as s:
         return tokens_of(s, user['id'])
 
 
 @app.delete('/api/tokens/{token_id}')
 def revoke_token(token_id: str, request: Request):
     user = hub_user(request)
-    with db() as s:
+    with db(user['id']) as s:
         s.execute('DELETE FROM carbon_api_tokens WHERE id=? AND account=?', (token_id, user['id']))
     return {'ok': True}
 
@@ -390,7 +390,7 @@ def records(request: Request, year: int | None = None, site: str | None = None, 
     if scope:
         clauses.append('scope=?'); args.append(scope)
     where = ' AND '.join(clauses)
-    with db() as s:
+    with db(user) as s:
         total = s.execute('SELECT COUNT(*) AS n FROM carbon_records WHERE '+where, tuple(args)).fetchone()['n']
         rows = s.execute('SELECT body FROM carbon_records WHERE '+where+' ORDER BY period,id LIMIT ? OFFSET ?', tuple(args+[max(1,min(limit,1000)),max(0,offset)])).fetchall()
     return {'total': total, 'items': [decode(r['body']) for r in rows]}
@@ -398,8 +398,9 @@ def records(request: Request, year: int | None = None, site: str | None = None, 
 
 @app.get('/api/audit')
 def audit(request: Request):
-    with db() as s:
-        rows = s.execute('SELECT action,revision,created,details FROM carbon_events WHERE account=? ORDER BY created DESC LIMIT 100', (account(request)['id'],)).fetchall()
+    user = account(request)['id']
+    with db(user) as s:
+        rows = s.execute('SELECT action,revision,created,details FROM carbon_events WHERE account=? ORDER BY created DESC LIMIT 100', (user,)).fetchall()
     return [dict(r, details=decode(r['details'])) for r in rows]
 
 
@@ -476,7 +477,7 @@ def get_document(doc_id: str, request: Request):
 @app.get('/api/admin/accounts')
 def admin_list_accounts(request: Request):
     require_admin(request)
-    with db() as s:
+    with db(SYSTEM) as s:
         rows = s.execute('SELECT a.id,a.username,a.company,a.role,a.active,a.created,st.updated,'
                          '(SELECT COUNT(*) FROM carbon_records r WHERE r.account=a.id) AS records FROM carbon_accounts a '
                          'LEFT JOIN carbon_states st ON st.account=a.id ORDER BY a.created DESC, a.username').fetchall()
@@ -495,7 +496,7 @@ def admin_create_account(body: AdminAccountCreate, request: Request):
     company = body.company.strip()
     password = secrets.token_urlsafe(12)
     account_id = str(uuid.uuid4())
-    with db() as s:
+    with db(SYSTEM) as s:
         if s.execute('SELECT id FROM carbon_accounts WHERE username=?', (name,)).fetchone():
             raise HTTPException(409, 'Ya existe una cuenta con ese usuario.')
         s.execute('INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?)',
@@ -508,7 +509,7 @@ def admin_create_account(body: AdminAccountCreate, request: Request):
 def admin_reset_password(account_id: str, request: Request):
     admin = require_admin(request)
     password = secrets.token_urlsafe(12)
-    with db() as s:
+    with db(SYSTEM) as s:
         target = s.execute('SELECT id,username FROM carbon_accounts WHERE id=?', (account_id,)).fetchone()
         if not target:
             raise HTTPException(404, 'Cuenta no encontrada.')
@@ -527,7 +528,7 @@ def admin_set_active(account_id: str, body: AdminSetActive, request: Request):
     admin = require_admin(request)
     if account_id == admin['id'] and not body.active:
         raise HTTPException(400, 'No podés desactivar tu propia cuenta de administrador.')
-    with db() as s:
+    with db(SYSTEM) as s:
         target = s.execute('SELECT id,username FROM carbon_accounts WHERE id=?', (account_id,)).fetchone()
         if not target:
             raise HTTPException(404, 'Cuenta no encontrada.')
@@ -548,7 +549,7 @@ def admin_target(s, account_id):
 @app.get('/api/admin/accounts/{account_id}/settings')
 def admin_get_settings(account_id: str, request: Request):
     require_admin(request)
-    with db() as s:
+    with db(SYSTEM) as s:
         admin_target(s, account_id)
         return {**features.catalogue(features.of(s, account_id)), 'tokens': tokens_of(s, account_id)}
 
@@ -561,7 +562,7 @@ class AdminSettings(BaseModel):
 @app.put('/api/admin/accounts/{account_id}/settings')
 def admin_put_settings(account_id: str, body: AdminSettings, request: Request):
     admin = require_admin(request)
-    with db() as s:
+    with db(SYSTEM) as s:
         target = admin_target(s, account_id)
         current = features.update(s, account_id, body.model_dump())
         event(s, admin['id'], 'admin_settings', 0, {'target': account_id, 'username': target['username'], **body.model_dump()})
@@ -571,7 +572,7 @@ def admin_put_settings(account_id: str, body: AdminSettings, request: Request):
 @app.post('/api/admin/accounts/{account_id}/tokens')
 def admin_create_token(account_id: str, body: TokenCreate, request: Request):
     admin = require_admin(request)
-    with db() as s:
+    with db(SYSTEM) as s:
         target = admin_target(s, account_id)
         features.require(s, account_id, 'integrations', 'hub', 'Activá primero la integración con IVZ Sustainability Hub.')
         token = new_token(s, account_id, body.label)
@@ -582,7 +583,7 @@ def admin_create_token(account_id: str, body: TokenCreate, request: Request):
 @app.delete('/api/admin/accounts/{account_id}/tokens/{token_id}')
 def admin_revoke_token(account_id: str, token_id: str, request: Request):
     admin = require_admin(request)
-    with db() as s:
+    with db(SYSTEM) as s:
         target = admin_target(s, account_id)
         s.execute('DELETE FROM carbon_api_tokens WHERE id=? AND account=?', (token_id, account_id))
         event(s, admin['id'], 'admin_revoke_token', 0, {'target': account_id, 'username': target['username']})
@@ -592,7 +593,7 @@ def admin_revoke_token(account_id: str, token_id: str, request: Request):
 @app.post('/api/admin/accounts/{account_id}/impersonate')
 def admin_impersonate(account_id: str, request: Request, response: Response):
     admin = require_admin(request)
-    with db() as s:
+    with db(SYSTEM) as s:
         target = s.execute('SELECT id,username,active FROM carbon_accounts WHERE id=?', (account_id,)).fetchone()
         if not target or not target['active']:
             raise HTTPException(404, 'Cuenta no encontrada o inactiva.')
@@ -612,7 +613,7 @@ def admin_return(request: Request, response: Response):
     return_token = request.cookies.get('ivz_carbon_admin_return', '')
     if not return_token:
         raise HTTPException(400, 'No hay una sesión de administrador para volver.')
-    with db() as s:
+    with db(SYSTEM) as s:
         row = s.execute('SELECT a.id,a.role FROM carbon_accounts a JOIN carbon_sessions t ON t.account=a.id WHERE t.token=? AND t.expires>?',
                         (token_hash(return_token), time.time())).fetchone()
     if not row or row['role'] != 'admin':
@@ -626,7 +627,7 @@ def admin_return(request: Request, response: Response):
 
 @app.get('/health')
 def health():
-    with db() as s:
+    with db(SYSTEM) as s:
         s.execute('SELECT 1')
         similarity = matching.engine(s)
     return {'status': 'ok', 'database': 'postgresql' if database_url() else 'sqlite-local', 'similarity': similarity}

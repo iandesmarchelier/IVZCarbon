@@ -6,6 +6,7 @@ from backend.reports import FIELDS, bars
 
 class ReportRegressions(unittest.TestCase):
     setUp = fixture.ApiTests.setUp
+    use_database = fixture.ApiTests.use_database
     tearDown = fixture.ApiTests.tearDown
     login = fixture.ApiTests.login
     initialize = fixture.ApiTests.initialize

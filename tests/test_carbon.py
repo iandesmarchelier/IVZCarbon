@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 from backend.app import app, bootstrap_account
 from backend.manage import create_user
 from backend.metrics import compute, normalize
-from backend.storage import db, database_url, decode
+from backend.storage import SYSTEM, db, database_url, decode
 from backend.security import hash_password, verify_password
 from backend import features, matching
 from backend.invoice_parser import parse_document
@@ -151,10 +151,14 @@ class ApiTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory()
         self.env=patch.dict(os.environ, {'CARBON_DATABASE_URL':'','CARBON_SQLITE_PATH':str(Path(self.tmp.name)/'carbon.sqlite'),'CARBON_ENV':'test'})
         self.env.start()
+        self.use_database()
         self.client=TestClient(app).__enter__()
         create_user('one','Empresa uno','test-password-123')
         create_user('two','Empresa dos','test-password-123')
         self.h={'X-IVZ-Carbon':'1'}
+
+    def use_database(self):
+        """SQLite here; tests/test_isolation.py runs these same tests on PostgreSQL with row-level security."""
 
     def tearDown(self):
         self.client.__exit__(None,None,None);self.env.stop();self.tmp.cleanup()
@@ -258,7 +262,7 @@ class ApiTests(unittest.TestCase):
 
     def test_expiry_and_rate_limit(self):
         self.login()
-        with db() as s:s.execute('UPDATE carbon_sessions SET expires=0')
+        with db(SYSTEM) as s:s.execute('UPDATE carbon_sessions SET expires=0')
         self.assertEqual(self.client.get('/api/state').status_code,401)
         for _ in range(10):
             self.assertEqual(self.client.post('/api/login',headers=self.h,json={'username':'unknown','password':'bad'}).status_code,401)
@@ -269,7 +273,7 @@ class ApiTests(unittest.TestCase):
             bootstrap_account()
         with patch.dict(os.environ, {'CARBON_BOOTSTRAP_PASSWORD_HASH':hash_password('second-password-456')}):
             bootstrap_account()
-        with db() as s:
+        with db(SYSTEM) as s:
             rows=s.execute('SELECT password FROM carbon_accounts WHERE username=?',('demo',)).fetchall()
         self.assertEqual(len(rows),1)
         self.assertTrue(verify_password('first-password-123',rows[0]['password']))
@@ -344,7 +348,7 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(current['state'],expected)
                 self.assertEqual(self.paged(),{'revision':current['revision'],'state':current['state']})
         factor0=current['state']['FACTORS'][0]
-        with db() as s:  # the queryable copy follows the factor change
+        with db(SYSTEM) as s:  # the queryable copy follows the factor change
             rows=s.execute("SELECT kg,quantity FROM carbon_records WHERE factor=? AND account=(SELECT id FROM carbon_accounts WHERE username='one')",(factor0['id'],)).fetchall()
         self.assertTrue(rows and all(abs(r['kg']-r['quantity']*factor0['v'])<1e-6 for r in rows))
 
@@ -380,14 +384,14 @@ class ApiTests(unittest.TestCase):
 
     def test_single_body_inventories_are_moved_to_rows_once(self):
         self.login();current=self.initialize()
-        with db() as s:  # write the inventory in the pre-split format, as production has it
+        with db(SYSTEM) as s:  # write the inventory in the pre-split format, as production has it
             user=s.execute("SELECT id FROM carbon_accounts WHERE username='one'").fetchone()['id']
             s.execute('UPDATE carbon_states SET body=? WHERE account=?',(json.dumps(current['state']),user))
             s.execute('UPDATE carbon_records SET seq=NULL WHERE account=?',(user,))
             s.execute("DELETE FROM carbon_entities WHERE account=? AND kind='MOV'",(user,))
         self.assertEqual(self.paged(),{'revision':current['revision'],'state':current['state']})
         self.assertEqual(self.client.get('/api/state').json(),current)
-        with db() as s:
+        with db(SYSTEM) as s:
             body=decode(s.execute('SELECT body FROM carbon_states WHERE account=?',(user,)).fetchone()['body'])
             backups=s.execute('SELECT body FROM carbon_state_backups WHERE account=?',(user,)).fetchall()
         self.assertNotIn('REC',body)
@@ -455,7 +459,7 @@ class ApiTests(unittest.TestCase):
         closed_site=self.client.get(f'/api/summary?year=2024&site={site}').json();closed_site.pop('closed');self.assertEqual(closed_site,before_site)
         # Reopening: only an administrator working inside the account, with a reason.
         self.assertEqual(self.client.post('/api/closures/2024/reopen',headers=self.h,json={'reason':'Corrección'}).status_code,403)
-        with db() as s:
+        with db(SYSTEM) as s:
             s.execute("UPDATE carbon_accounts SET role='admin' WHERE username='two'")
             one=s.execute("SELECT id FROM carbon_accounts WHERE username='one'").fetchone()['id']
         self.login('two')
@@ -504,7 +508,7 @@ class ApiTests(unittest.TestCase):
 
     def test_admin_switches_sections_and_integrations_per_account(self):
         create_user('three','Empresa tres','test-password-123')
-        with db() as s:
+        with db(SYSTEM) as s:
             s.execute("UPDATE carbon_accounts SET role='admin' WHERE username='two'")
             one=s.execute("SELECT id FROM carbon_accounts WHERE username='one'").fetchone()['id']
             three=s.execute("SELECT id FROM carbon_accounts WHERE username='three'").fetchone()['id']
@@ -531,7 +535,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/tokens').status_code,403)
         with TestClient(app) as anon:
             self.assertEqual(anon.get('/api/link/sites',headers=auth).status_code,403)
-        with db() as s:
+        with db(SYSTEM) as s:
             self.assertEqual(features.of(s,three),features.parse('{}'))  # other accounts keep the defaults
         # Back on: the old token works again; the administrator mints and revokes tokens for the client.
         self.login('two')
@@ -557,18 +561,23 @@ class ApiTests(unittest.TestCase):
         # A saved record that names the file links it; files never linked are removed after a day.
         after=copy.deepcopy(before['state']);after['REC'][0]['origin']['files']=[kept]
         self.assertEqual(self.client.post('/api/state/changes',headers=self.h,json=self.diff(before,after)).status_code,200)
-        with db() as s:s.execute('UPDATE carbon_documents SET created=0')
+        with db(SYSTEM) as s:s.execute('UPDATE carbon_documents SET created=0')
         upload('nueva.pdf',pdf)
         self.assertEqual(self.client.get('/api/documents/'+kept).status_code,200)
         self.assertEqual(self.client.get('/api/documents/'+discarded).status_code,404)
         self.login('two')
         self.assertEqual(self.client.get('/api/documents/'+kept).status_code,404)
 
+    def test_every_connection_names_its_account(self):
+        with self.assertRaises(TypeError), db():pass
+        for bad in ('', None, 7):
+            with self.subTest(account=bad), self.assertRaises(ValueError), db(bad):pass
+
     def test_vercel_database_configuration(self):
         with patch.dict(os.environ, {'VERCEL':'1','DATABASE_URL':'postgresql://integration-test'}):
             self.assertEqual(database_url(),'postgresql://integration-test')
         with patch.dict(os.environ, {'VERCEL':'1','DATABASE_URL':''}):
-            with self.assertRaises(RuntimeError), db():pass
+            with self.assertRaises(RuntimeError), db(SYSTEM):pass
 
 
 if __name__=='__main__':unittest.main()

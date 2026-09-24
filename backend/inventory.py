@@ -81,7 +81,7 @@ def _delete(s, user, kind, ids):
 
 def load(user):
     """The complete inventory, as the single-body format returned it."""
-    with db() as s:
+    with db(user) as s:
         row, body = _catalogue(s, user)
         if not row:
             return {'revision': 0, 'state': None, 'updated': None}
@@ -94,9 +94,7 @@ def snapshot(user):
     """One consistent view for long downloads: ({'revision', 'updated', 'state': catalogue} or None, rows(kind)).
 
     rows(kind) yields the items in order, reading them from the database in batches instead of all at once."""
-    with db() as s:
-        if s.postgres:
-            s.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+    with db(user, repeatable=True) as s:
         row, body = _catalogue(s, user)
 
         def rows(kind):
@@ -109,7 +107,7 @@ def snapshot(user):
 
 
 def load_catalogue(user):
-    with db() as s:
+    with db(user) as s:
         row, body = _catalogue(s, user)
         if not row:
             return {'revision': 0, 'state': None, 'updated': None, 'counts': {}}
@@ -121,7 +119,7 @@ def load_catalogue(user):
 def load_page(user, kind, offset, limit):
     if kind not in ROWS:
         raise HTTPException(422, 'Tipo de dato desconocido.')
-    with db() as s:
+    with db(user) as s:
         row, _ = _catalogue(s, user)
         if not row:
             raise HTTPException(404, 'Inicializá el inventario.')
@@ -132,7 +130,7 @@ def load_page(user, kind, offset, limit):
 def upload(user, batch, part, changes):
     """Stage part of a change set too large for one request; the save that names the batch applies it."""
     _check_changes(changes, staged=True)
-    with db() as s:
+    with db(user) as s:
         s.execute('DELETE FROM carbon_uploads WHERE created<?', (time.time() - UPLOAD_TTL,))
         s.execute('DELETE FROM carbon_uploads WHERE account=? AND batch=? AND part=?', (user, batch, part))
         s.execute('INSERT INTO carbon_uploads (account,batch,part,created,body) VALUES (?,?,?,?,?)',
@@ -206,7 +204,7 @@ def save(user, revision, action='save', full=None, catalogue=None, changes=None,
         if not isinstance(order, dict) or set(order) - set(ROWS):
             raise HTTPException(422, 'Orden de registros inválido.')
     updated = datetime.now(timezone.utc).isoformat()
-    with db() as s:
+    with db(user) as s:
         row, body = _catalogue(s, user, lock=True)
         current = row['revision'] if row else 0
         if revision != current:
@@ -290,14 +288,14 @@ def _check_closed(old, raw, closed):
 
 
 def closures(user):
-    with db() as s:
+    with db(user) as s:
         rows = s.execute('SELECT year,closed_at,closed_by,results FROM carbon_closures WHERE account=? ORDER BY year', (user,)).fetchall()
     return [{'year': r['year'], 'closedAt': r['closed_at'], 'closedBy': r['closed_by'], 'tCO2e': decode(r['results'])['tCO2e']} for r in rows]
 
 
 def close_year(user, year, by):
     now = datetime.now(timezone.utc).isoformat()
-    with db() as s:
+    with db(user) as s:
         row, body = _catalogue(s, user, lock=True)  # no save can interleave
         if not row:
             raise HTTPException(404, 'Inicializá el inventario.')
@@ -318,7 +316,7 @@ def close_year(user, year, by):
 
 
 def reopen_year(user, year, by, reason):
-    with db() as s:
+    with db(user) as s:
         row, _ = _catalogue(s, user, lock=True)
         closure = s.execute('SELECT results FROM carbon_closures WHERE account=? AND year=?', (user, year)).fetchone()
         if not closure:
@@ -332,7 +330,7 @@ def reopen_year(user, year, by, reason):
 def summary(user, year=None, site=None):
     """Results for the whole inventory or a year and site; a closed year answers with what it had when closed."""
     if year:
-        with db() as s:
+        with db(user) as s:
             closure = s.execute('SELECT closed_at,closed_by,results,factors,sites FROM carbon_closures WHERE account=? AND year=?',
                                 (user, year)).fetchone()
         if closure:

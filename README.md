@@ -87,6 +87,10 @@ Documentación interactiva: `/docs`. Las operaciones de escritura requieren `X-I
 
 Para restaurar un respaldo mediante API: obtener la revisión actual de `/api/state`, enviar esa revisión junto con `state` del respaldo mediante `PUT /api/state`. Descargar antes la versión actual. Un conflicto 409 requiere revisar qué versión conservar; no reintentar automáticamente con la revisión nueva. Un 423 indica que el respaldo cambia registros de un año cerrado.
 
+## Aislamiento entre clientes
+
+Aislamiento entre clientes: además del filtro por cuenta de cada consulta, PostgreSQL lo hace cumplir con row-level security. Cada conexión nombra su cuenta (`db(cuenta)`; `db(SYSTEM)` queda para el ingreso, el administrador y los scripts). La de un cliente trabaja como el rol `ivz_carbon_tenant`, que solo ve y escribe filas de esa cuenta en toda tabla con columna `account` (y su propia fila en `carbon_accounts`), aunque una consulta olvide el `WHERE account=?`. Al arrancar, la aplicación crea ese rol y las políticas que falten, así que el usuario de la base necesita permiso para crear roles (el dueño de Neon lo tiene). Si no puede, la aplicación sigue funcionando sin esa protección y lo registra en el log como «Row-level security is NOT enforced».
+
 ## Pruebas y alcance verificado
 
 Desde la carpeta padre del proyecto Carbon:
@@ -97,6 +101,8 @@ python -m unittest discover -s carbon/tests -v
 $env:CARBON_TEST_POSTGRES_URL = 'postgresql://usuario:password@127.0.0.1:55432/base_de_prueba'
 node --check carbon/static/bridge.js
 ```
+
+Para probar el aislamiento en PostgreSQL, desde la raíz del repositorio: `python -m unittest discover -s tests` con `CARBON_TEST_ISOLATION_URL` apuntando a una base descartable con «test» en el nombre (las pruebas borran sus tablas). `tests/test_isolation.py` repite ahí las pruebas de la API con row-level security y comprueba que una cuenta no lee ni escribe filas de otra. Sin esa variable, igual verifica que `db(SYSTEM)` solo aparezca en el ingreso, el administrador y los scripts.
 
 La prueba de equivalencia compara 2.658 registros contra resultados extraídos del motor JavaScript V3.5. La suite cubre sesiones, aislamiento, conflictos, validación, recálculo, inicialización y exportación. Las pruebas locales usan SQLite. Para comprobar una instancia PostgreSQL dedicada, desde esta carpeta y con `CARBON_DATABASE_URL` configurada: `python -m backend.check_postgres`.
 

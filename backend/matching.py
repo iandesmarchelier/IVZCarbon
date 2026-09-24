@@ -237,7 +237,7 @@ def rank(s, factors, items):
 
 
 def match(user, items):
-    with db() as s:
+    with db(user) as s:
         row = s.execute('SELECT body FROM carbon_states WHERE account=?', (user,)).fetchone()
         if not row:
             raise HTTPException(404, 'Inicializá el inventario.')

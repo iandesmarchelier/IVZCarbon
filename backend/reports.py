@@ -38,20 +38,20 @@ class ReportRequest(BaseModel):
         return {k:v.strip() for k,v in notes.items()}
 
 def history(user):
-    with db() as s:
+    with db(user) as s:
         rows = s.execute('SELECT id,year,created,body FROM carbon_reports WHERE account=? ORDER BY created DESC LIMIT 100', (user,)).fetchall()
     return [dict(id=r['id'], year=r['year'], created=r['created'], scope=decode(r['body'])['scope'],
                  site=decode(r['body']).get('site'), approvedAt=decode(r['body']).get('approvedAt')) for r in rows]
 
 def get(user, report_id):
-    with db() as s:
+    with db(user) as s:
         row = s.execute('SELECT body FROM carbon_reports WHERE account=? AND id=?', (user, report_id)).fetchone()
     if not row:
         raise HTTPException(404, 'Reporte no encontrado.')
     return decode(row['body'])
 
 def approve(user, report_id):
-    with db() as s:
+    with db(user['id']) as s:
         row=s.execute('SELECT body FROM carbon_reports WHERE account=? AND id=?'+(' FOR UPDATE' if s.postgres else ''),(user['id'],report_id)).fetchone()
         if not row: raise HTTPException(404,'Reporte no encontrado.')
         report=decode(row['body'])
@@ -68,7 +68,7 @@ def create(user, request):
     if any(k not in FIELDS or len(v) > 6000 for k,v in request.notes.items()):
         raise HTTPException(422, 'Campos del reporte inválidos o demasiado extensos.')
     # Lock the same account row as inventory writes/closures for a coherent snapshot.
-    with db() as s:
+    with db(user['id']) as s:
         row, catalogue = inventory._catalogue(s, user['id'], lock=True)
         if not row:
             raise HTTPException(404, 'Inicializá el inventario antes de generar el reporte.')
