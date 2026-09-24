@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from .metrics import normalize, compute, pending_match
 from .storage import db, decode, event
+from . import documents
 
 ROWS = {'REC': 'rid', 'MOV': 'id'}
 CATALOGUE_KINDS = ('FACTORS', 'SITES', 'PROCS', 'LINES', 'MACH', 'BIZ', 'WASTECAT', 'RULES')
@@ -252,6 +253,7 @@ def save(user, revision, action='save', full=None, catalogue=None, changes=None,
             s.executemany('INSERT INTO carbon_entities (account,kind,id,body,seq) VALUES (?,?,?,?,?)',
                           [(user, kind, item['id'], s.json(item), i) for kind in CATALOGUE_KINDS for i, item in enumerate(new_body[kind])])
         written = {kind: _sync(s, user, kind, old[kind], state[kind]) for kind in ROWS}
+        documents.link(s, user, state['REC'])
         event(s, user, action, current + 1, {'records': len(state['REC']), 'kg': summary['kg'], 'written': written})
     return {'revision': current + 1, 'updated': updated, 'summary': summary}
 

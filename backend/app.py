@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse,
 from pydantic import BaseModel, Field
 
 from .invoice_parser import parse_document
-from . import features, inventory, matching, reports
+from . import documents, features, inventory, matching, reports
 from .security import hash_password, verify_password, token_hash
 from .storage import db, initialize, decode, database_url, event
 
@@ -460,9 +460,17 @@ def inventory_csv(request: Request):
 
 @app.post('/api/parse-document')
 async def parse_document_endpoint(request: Request, kind: Literal['elec', 'gas', 'waste', 'auto'] = Form(...), file: UploadFile = File(...)):
-    account(request)
+    user = account(request)
     data = await file.read()
-    return parse_document(data, file.filename or '', kind)
+    result = parse_document(data, file.filename or '', kind)
+    # Kept so the record can open it later ("Ver documento"); linked when a record that names it is saved.
+    result['document'] = documents.store(user['id'], file.filename or '', data)
+    return result
+
+
+@app.get('/api/documents/{doc_id}')
+def get_document(doc_id: str, request: Request):
+    return documents.open_document(account(request)['id'], doc_id)
 
 
 @app.get('/api/admin/accounts')

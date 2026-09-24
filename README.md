@@ -81,7 +81,8 @@ Documentación interactiva: `/docs`. Las operaciones de escritura requieren `X-I
 | `GET /api/export`, `GET /api/inventory.csv` | Respaldo e inventario |
 | `POST /api/factors/match` `{items:[{text, scope?, cat?, unit?, supplier?}]}`, `GET /api/factors/terms` | Factor de la biblioteca más parecido a cada descripción (hasta 5.000 por pedido; acepta también token de integración) y términos de búsqueda de la biblioteca |
 | `GET /api/audit`, `GET /health` | Auditoría y salud de la base |
-| `POST /api/parse-document` (form: `kind` = `elec`, `gas`, `waste` o `auto`, `file`) | Lectura de una factura o manifiesto; `auto` detecta el tipo y devuelve pistas de ubicación |
+| `POST /api/parse-document` (form: `kind` = `elec`, `gas`, `waste` o `auto`, `file`) | Lectura de una factura o manifiesto; `auto` detecta el tipo y devuelve pistas de ubicación. Guarda el archivo (`carbon_documents`, solo PDF/PNG/JPEG por sus primeros bytes) y devuelve su id en `document` |
+| `GET /api/documents/{id}` | Abre el documento subido («Ver documento» en la trazabilidad del registro, que lo guarda en `origin.files`). Un archivo que ningún registro guardado nombra se borra al día siguiente |
 | `GET`/`PUT /api/admin/accounts/{id}/settings`, `POST`/`DELETE /api/admin/accounts/{id}/tokens` | Administrador: secciones e integraciones de la cuenta, tokens del Hub |
 
 Para restaurar un respaldo mediante API: obtener la revisión actual de `/api/state`, enviar esa revisión junto con `state` del respaldo mediante `PUT /api/state`. Descargar antes la versión actual. Un conflicto 409 requiere revisar qué versión conservar; no reintentar automáticamente con la revisión nueva. Un 423 indica que el respaldo cambia registros de un año cerrado.

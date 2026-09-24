@@ -545,6 +545,25 @@ class ApiTests(unittest.TestCase):
             for t in tokens:self.client.delete(f'/api/admin/accounts/{one}/tokens/{t["id"]}',headers=self.h)
             self.assertEqual(anon.get('/api/link/sites',headers=minted).status_code,401)
 
+    def test_uploaded_documents_open_from_their_record(self):
+        self.login(); self.initialize(); before=self.paged()
+        pdf=b'%PDF-1.4\n% factura de prueba\n'
+        upload=lambda name,data:self.client.post('/api/parse-document',headers=self.h,data={'kind':'auto'},files={'file':(name,data,'application/pdf')}).json()
+        kept,discarded=upload('factura agosto.pdf',pdf)['document'],upload('otra.pdf',pdf)['document']
+        self.assertIsNone(upload('pagina.pdf',b'<html><script>alert(1)</script>')['document'])  # only real PDF, PNG or JPEG bytes
+        r=self.client.get('/api/documents/'+kept)
+        self.assertEqual((r.status_code,r.content,r.headers['content-type']),(200,pdf,'application/pdf'))
+        self.assertIn("filename*=UTF-8''factura%20agosto.pdf",r.headers['content-disposition'])
+        # A saved record that names the file links it; files never linked are removed after a day.
+        after=copy.deepcopy(before['state']);after['REC'][0]['origin']['files']=[kept]
+        self.assertEqual(self.client.post('/api/state/changes',headers=self.h,json=self.diff(before,after)).status_code,200)
+        with db() as s:s.execute('UPDATE carbon_documents SET created=0')
+        upload('nueva.pdf',pdf)
+        self.assertEqual(self.client.get('/api/documents/'+kept).status_code,200)
+        self.assertEqual(self.client.get('/api/documents/'+discarded).status_code,404)
+        self.login('two')
+        self.assertEqual(self.client.get('/api/documents/'+kept).status_code,404)
+
     def test_vercel_database_configuration(self):
         with patch.dict(os.environ, {'VERCEL':'1','DATABASE_URL':'postgresql://integration-test'}):
             self.assertEqual(database_url(),'postgresql://integration-test')

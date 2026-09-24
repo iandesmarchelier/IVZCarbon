@@ -1484,7 +1484,8 @@ function addInvoiceRecord(site,kind,o){
   clearPriorEnergy(site.id,o.period,kind);
   const doc=o.doc||('Factura '+(kind==='elec'?'eléctrica':'de gas natural')+' · '+site.name+' · '+pLabel(o.period));
   const conf=o.conf||Math.round(92+rnd()*7);
-  const originBase={sys:'Factura cargada — IVZ Carbon',doc,by:'Carga de factura · '+site.name};
+  const files=o.files&&o.files.length?o.files:undefined;  // archivos guardados: «Ver documento» los abre
+  const originBase={sys:'Factura cargada — IVZ Carbon',doc,by:'Carga de factura · '+site.name,files};
   if(kind==='elec'){
     const factor=o.factor||site.ef;
     const e=rec({p:o.period,type:'elec',site:site.id,source:'Electricidad — '+site.name,qty:+o.qty,unit:'kWh',
@@ -1495,7 +1496,7 @@ function addInvoiceRecord(site,kind,o){
     const d=rec({p:o.period,type:'td',site:site.id,source:'Pérdidas de red asociadas a '+site.name,qty:+o.qty,unit:'kWh',
       src:'calc',baseSrc:'invoice',factor:site.cc==='UY'?'FE-021':'FE-020',
       detail:{'Consumo aguas abajo':nf(+o.qty)+' kWh'},
-      origin:{sys:SYS.calc,doc:'derivado de '+e.rid,method:'Mismo consumo eléctrico del Alcance 2 × factor de pérdidas de red',by:'Motor de cálculo IVZ Carbon'}});
+      origin:{sys:SYS.calc,doc:'derivado de '+e.rid,method:'Mismo consumo eléctrico del Alcance 2 × factor de pérdidas de red',by:'Motor de cálculo IVZ Carbon',files}});
     e.pair=d.rid; d.pair=e.rid;
     postProcessRecord(e); postProcessRecord(d);
     return e;
@@ -1519,7 +1520,8 @@ function addWasteRecord(stream,o){
     factor:fid,treatment:o.treatment,src:'manifest',srcAct:'manifest',
     detail:{'Transportista / operador':o.operator||'—','Tratamiento':TREAT_LABEL[o.treatment]||o.treatment,'Fecha de retiro':o.date||'—'},
     origin:{sys:SYS.res,doc,method:o.read==='sample'?DOC_READ.sample+' — tratamiento '+(o.detected?'indicado en el ejemplo':'confirmado manualmente')
-      :o.detected?'Manifiesto — tratamiento leído del documento':'Manifiesto — tratamiento confirmado manualmente',by:'Carga de manifiesto'},
+      :o.detected?'Manifiesto — tratamiento leído del documento':'Manifiesto — tratamiento confirmado manualmente',by:'Carga de manifiesto',
+      files:o.files&&o.files.length?o.files:undefined},
     cls:{state:'auto',conf:Math.round((o.detected?93:90)+rnd()*6)}});
   postProcessRecord(r);
   return r;
@@ -1818,11 +1820,20 @@ function traceHTML(r){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn sm" onclick="exportTrace('${r.rid}')">Exportar cadena (CSV)</button>
         ${r.po||mv?`<button class="btn sm" onclick="toast('Simulación: en el producto final abriría la OC ${esc(mv?mv.oc:r.po.oc)} en SAP (ME23N).','↗')">Abrir OC en SAP</button>`:''}
-        <button class="btn sm ghost" onclick="toast('Simulación: en el producto final abriría el documento en ${esc(r.origin.sys.split(' — ')[0])}.','↗')">Ver documento en el sistema de origen</button>
+        ${traceDocButtons(r)}
       </div>
     </div>`;
 }
 function trace(rid){const r=REC.find(x=>x.rid===rid);if(r)openDrawer(traceHTML(r))}
+/* la factura o el manifiesto subido se abre en otra pestaña; los datos que llegaron por otra vía no tienen archivo */
+function traceDocButtons(r){
+  const files=(r.origin&&r.origin.files)||[];
+  if(files.length) return files.map((id,i)=>`<a class="btn sm" href="/api/documents/${encodeURIComponent(id)}" target="_blank" rel="noopener" style="text-decoration:none">${ico('doc')} Ver documento${files.length>1?' '+(i+1):''}</a>`).join('');
+  const why=r.src==='invoice'||r.src==='manifest'||r.baseSrc==='invoice'
+    ?'Este registro se cargó sin archivo (a mano, con un documento de ejemplo o antes de que IVZ Carbon guardara los documentos subidos).'
+    :'Este registro no tiene un archivo adjunto: sus datos llegaron por '+r.origin.sys.split(' — ')[0]+'.';
+  return `<button class="btn sm ghost" onclick="toast(${esc(JSON.stringify(why))},'ℹ')">Ver documento</button>`;
+}
 function exportTrace(rid){
   const r=REC.find(x=>x.rid===rid); if(!r) return; const f=FBI[r.factor];
   const rows=[['campo','valor','origen'],['registro',r.rid,''],['periodo',r.p,''],['sitio',SBI[r.site]?SBI[r.site].name:'',''],['alcance',r.scope,''],['categoria',catLabel(catKey(r)),'IVZ Carbon'],
@@ -3558,7 +3569,7 @@ async function invPickFile(input){
     if(d.period){ ensurePeriod(d.period); S.inv.period=d.period; }
     if(d.qty) S.inv.qty=d.qty;
     if(d.doc) S.inv.doc=d.doc;
-    S.inv.readMessage=result.message||''; S.inv.readOk=!!result.ok;
+    S.inv.readMessage=result.message||''; S.inv.readOk=!!result.ok; S.inv.file=result.document||null;
   }catch(e){
     S.inv.readMessage='No se pudo leer el documento: '+e.message;
   }
@@ -3567,7 +3578,7 @@ async function invPickFile(input){
 function invUseSample(){
   S.inv.fileName=(S.inv.kind==='elec'?'factura_electricidad_':'factura_gas_')+S.inv.period+'.pdf';
   if(!S.inv.doc) S.inv.doc='FC-'+Math.floor(1000+Math.random()*8999);
-  S.inv.simulated=true; S.inv.readMessage='';
+  S.inv.simulated=true; S.inv.readMessage=''; S.inv.file=null;
   S.inv.step=2; invRerender();
 }
 function invBack(){ S.inv.step=1; invRerender(); }
@@ -3577,7 +3588,7 @@ function invConfirm(){
   if(!(S.inv.qty>0)){ toast('Ingresá una cantidad mayor a cero.','⚠'); return; }
   if(!S.inv.period){ toast('Elegí un período.','⚠'); return; }
   const r=addInvoiceRecord(site,S.inv.kind,{period:S.inv.period,qty:S.inv.qty,provider:S.inv.provider,doc:S.inv.doc||undefined,
-    read:S.inv.simulated?'sample':S.inv.readOk?'document':''});
+    read:S.inv.simulated?'sample':S.inv.readOk?'document':'',files:!S.inv.simulated&&S.inv.file?[S.inv.file]:[]});
   closeModal();
   toast('Factura cargada: '+nfv(S.inv.qty,0)+(S.inv.kind==='elec'?' kWh':' m³')+' → '+t(r.kg,3)+' tCO₂e en '+(S.inv.kind==='elec'?'2.1 Electricidad adquirida':'1.1 Combustión estacionaria')+'.','✓');
   render();
@@ -3651,13 +3662,13 @@ async function wmPickFile(input){
     if(d.operator) S.wm.operator=d.operator;
     if(d.doc) S.wm.doc=d.doc;
     S.wm.treatment=d.treatment||''; S.wm.detected=!!d.treatment;
-    S.wm.readMessage=result.message||'';
+    S.wm.readMessage=result.message||''; S.wm.file=result.document||null;
   }catch(e){
     S.wm.readMessage='No se pudo leer el documento: '+e.message;
   }
   S.wm.reading=false; wmRerender();
 }
-function wmUseSample(){ S.wm.fileName='manifiesto_retiro.pdf'; wmExtract(); S.wm.simulated=true; S.wm.readMessage=''; S.wm.step=2; wmRerender(); }
+function wmUseSample(){ S.wm.fileName='manifiesto_retiro.pdf'; wmExtract(); S.wm.simulated=true; S.wm.file=null; S.wm.readMessage=''; S.wm.step=2; wmRerender(); }
 function wmBack(){ S.wm.step=1; wmRerender(); }
 function wmSet(k,v){ S.wm[k]=(k==='qty')?(+v||0):v; if(k==='treatment'){ S.wm.detected=false; wmRerender(); } }
 function wmConfirm(){
@@ -3672,7 +3683,7 @@ function wmConfirm(){
     WASTECAT.push(stream); WCBI[id]=stream;
   } else stream=WCBI[S.wm.streamId];
   const r=addWasteRecord(stream,{period:S.wm.period,qty:S.wm.qty,date:S.wm.date,operator:S.wm.operator,doc:S.wm.doc,
-    treatment:S.wm.treatment,detected:S.wm.detected,site:stream.site,read:S.wm.simulated?'sample':''});
+    treatment:S.wm.treatment,detected:S.wm.detected,site:stream.site,read:S.wm.simulated?'sample':'',files:!S.wm.simulated&&S.wm.file?[S.wm.file]:[]});
   closeModal();
   toast('Manifiesto cargado: '+nfv(S.wm.qty,0)+' kg → '+t(r.kg,3)+' tCO₂e en Alcance 3 · Cat. 5.','✓');
   render();
@@ -3776,7 +3787,7 @@ function bulkPeriodFromName(name){
 }
 function bulkClassify(row,res){
   const d=res.fields||{};
-  row.status='read'; row.readOk=!!res.ok; row.msg=res.ok?'':(res.message||''); row.hints=res.hints||{}; row.kind=res.kind||'';
+  row.status='read'; row.readOk=!!res.ok; row.file=res.document||null; row.msg=res.ok?'':(res.message||''); row.hints=res.hints||{}; row.kind=res.kind||'';
   row.provider=d.provider||''; row.doc=d.doc||''; row.qty=+d.qty||0;
   row.period=d.period||(d.date?String(d.date).slice(0,7):'')||bulkPeriodFromName(row.name);
   if(row.kind==='waste'){ row.date=d.date||''; row.operator=d.operator||''; }
@@ -3891,12 +3902,12 @@ function bulkSave(){
   const ready=b.rows.filter(r=>r.include&&r.status!=='error'&&!bulkIssues(r).length); if(!ready.length) return;
   let kg=0, n=0; const groups=new Map();
   ready.forEach(r=>{ if(r.kind==='waste'){
-      const rec=addWasteRecord(WCBI[r.stream],{period:r.period,qty:r.qty,date:r.date||r.period+'-01',operator:r.operator,doc:r.doc||undefined,treatment:r.treatment,detected:r.detected,site:r.site,read:r.readOk?'document':''});
+      const rec=addWasteRecord(WCBI[r.stream],{period:r.period,qty:r.qty,date:r.date||r.period+'-01',operator:r.operator,doc:r.doc||undefined,treatment:r.treatment,detected:r.detected,site:r.site,read:r.readOk?'document':'',files:r.file?[r.file]:[]});
       kg+=rec.kg; n++;
     } else { const k=bulkKey(r); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(r); } });
   groups.forEach(list=>{ const r0=list[0];
     const rec=addInvoiceRecord(SBI[r0.site],r0.kind,{period:r0.period,qty:list.reduce((a,r)=>a+r.qty,0),provider:list.map(r=>r.provider).filter(Boolean)[0]||'',
-      doc:list.map(r=>r.doc).filter(Boolean).join(' + ')||undefined,read:list.every(r=>r.readOk)?'document':''});
+      doc:list.map(r=>r.doc).filter(Boolean).join(' + ')||undefined,read:list.every(r=>r.readOk)?'document':'',files:list.map(r=>r.file).filter(Boolean)});
     kg+=rec.kg; n+=list.length; });
   // aprender los N° de cliente o suministro: solo los que en esta tanda aparecen en una única sede
   const seen=new Map();
