@@ -1474,6 +1474,11 @@ function clearPriorEnergy(siteId,period,kind){
     const j=REC.findIndex(x=>x.rid===r.rid); if(j>=0) REC.splice(j,1);
   });
 }
+/* cómo llegaron los datos de una factura o manifiesto: 'document' = leídos del archivo (texto del PDF u OCR),
+   'sample' = documento de ejemplo con valores inventados, cualquier otro = cargados o corregidos a mano */
+const DOC_READ={document:'Lectura del documento (texto del PDF u OCR), revisada al cargar',sample:'Documento de ejemplo (valores de demostración)'};
+/* los registros guardados antes de distinguirlo decían «(simulada)» aunque el documento fuera real */
+const originMethod=m=>String(m||'').replace('Lectura de factura (simulada) — ','Factura cargada — ').replace('tratamiento detectado en el documento (simulado)','tratamiento indicado en el documento');
 function addInvoiceRecord(site,kind,o){
   ensurePeriod(o.period);
   clearPriorEnergy(site.id,o.period,kind);
@@ -1485,7 +1490,7 @@ function addInvoiceRecord(site,kind,o){
     const e=rec({p:o.period,type:'elec',site:site.id,source:'Electricidad — '+site.name,qty:+o.qty,unit:'kWh',
       factor,sub:'elec',src:'invoice',srcAct:'invoice',
       detail:{'Proveedor':o.provider||'—','Período facturado':pLabel(o.period),'Documento':doc},
-      origin:{...originBase,method:'Lectura de factura (simulada) — kWh facturados × factor de red'},
+      origin:{...originBase,method:(DOC_READ[o.read]||'Factura cargada')+' — kWh facturados × factor de red'},
       cls:{state:'auto',conf}});
     const d=rec({p:o.period,type:'td',site:site.id,source:'Pérdidas de red asociadas a '+site.name,qty:+o.qty,unit:'kWh',
       src:'calc',baseSrc:'invoice',factor:site.cc==='UY'?'FE-021':'FE-020',
@@ -1498,7 +1503,7 @@ function addInvoiceRecord(site,kind,o){
   const r=rec({p:o.period,type:'fuel',site:site.id,source:'Gas natural — '+site.name,qty:+o.qty,unit:'m³',
     factor:'FE-001',sub:'stat',src:'invoice',srcAct:'invoice',
     detail:{'Proveedor':o.provider||'—','Período facturado':pLabel(o.period),'Documento':doc},
-    origin:{...originBase,method:'Lectura de factura (simulada) — m³ facturados × factor de gas natural'},
+    origin:{...originBase,method:(DOC_READ[o.read]||'Factura cargada')+' — m³ facturados × factor de gas natural'},
     cls:{state:'auto',conf}});
   postProcessRecord(r);
   return r;
@@ -1513,7 +1518,8 @@ function addWasteRecord(stream,o){
   const r=rec({p:o.period,type:'waste',site:o.site||stream.site,wasteId:stream.id,source:stream.name,qty:+o.qty,unit:'kg',
     factor:fid,treatment:o.treatment,src:'manifest',srcAct:'manifest',
     detail:{'Transportista / operador':o.operator||'—','Tratamiento':TREAT_LABEL[o.treatment]||o.treatment,'Fecha de retiro':o.date||'—'},
-    origin:{sys:SYS.res,doc,method:o.detected?'Manifiesto — tratamiento detectado en el documento (simulado)':'Manifiesto — tratamiento confirmado manualmente',by:'Carga de manifiesto'},
+    origin:{sys:SYS.res,doc,method:o.read==='sample'?DOC_READ.sample+' — tratamiento '+(o.detected?'indicado en el ejemplo':'confirmado manualmente')
+      :o.detected?'Manifiesto — tratamiento leído del documento':'Manifiesto — tratamiento confirmado manualmente',by:'Carga de manifiesto'},
     cls:{state:'auto',conf:Math.round((o.detected?93:90)+rnd()*6)}});
   postProcessRecord(r);
   return r;
@@ -1796,7 +1802,7 @@ function traceHTML(r){
   blocks.push(traceBlock('Ubicación en el modelo',st.name,[pc?'Sector: <b>'+esc(pc.sector)+'</b>':null,pc?'Proceso: <b>'+esc(pc.name)+'</b>':null,
     r.line&&LBI[r.line]?'Línea: <b>'+esc(LBI[r.line].name)+'</b>':null,mc?'Equipo: <b>'+esc(mc.name)+'</b>':null].filter(Boolean).join('<br>')||'Registro a nivel de sitio / corporativo'));
   /* 9 · documento de origen */
-  blocks.push(traceBlock('Documento de origen',esc(r.origin.doc),`Sistema: <b>${esc(r.origin.sys)}</b><br>Método: ${esc(r.origin.method)}<br>Responsable del dato: ${esc(r.origin.by)}`,{origin:true,badges:srcBadge(srcOf(r))}));
+  blocks.push(traceBlock('Documento de origen',esc(r.origin.doc),`Sistema: <b>${esc(r.origin.sys)}</b><br>Método: ${esc(originMethod(r.origin.method))}<br>Responsable del dato: ${esc(r.origin.by)}`,{origin:true,badges:srcBadge(srcOf(r))}));
   return `<div class="drawer-h">
       <div style="flex:1;min-width:0">
         <div class="eyebrow">Trazabilidad · registro <span class="num">${r.rid}</span></div>
@@ -3552,7 +3558,7 @@ async function invPickFile(input){
     if(d.period){ ensurePeriod(d.period); S.inv.period=d.period; }
     if(d.qty) S.inv.qty=d.qty;
     if(d.doc) S.inv.doc=d.doc;
-    S.inv.readMessage=result.message||'';
+    S.inv.readMessage=result.message||''; S.inv.readOk=!!result.ok;
   }catch(e){
     S.inv.readMessage='No se pudo leer el documento: '+e.message;
   }
@@ -3570,7 +3576,8 @@ function invConfirm(){
   const site=SBI[S.inv.siteId];
   if(!(S.inv.qty>0)){ toast('Ingresá una cantidad mayor a cero.','⚠'); return; }
   if(!S.inv.period){ toast('Elegí un período.','⚠'); return; }
-  const r=addInvoiceRecord(site,S.inv.kind,{period:S.inv.period,qty:S.inv.qty,provider:S.inv.provider,doc:S.inv.doc||undefined});
+  const r=addInvoiceRecord(site,S.inv.kind,{period:S.inv.period,qty:S.inv.qty,provider:S.inv.provider,doc:S.inv.doc||undefined,
+    read:S.inv.simulated?'sample':S.inv.readOk?'document':''});
   closeModal();
   toast('Factura cargada: '+nfv(S.inv.qty,0)+(S.inv.kind==='elec'?' kWh':' m³')+' → '+t(r.kg,3)+' tCO₂e en '+(S.inv.kind==='elec'?'2.1 Electricidad adquirida':'1.1 Combustión estacionaria')+'.','✓');
   render();
@@ -3585,11 +3592,11 @@ function invModalHTML(){
         <button class="btn" onclick="document.getElementById('invFile').click()">Elegir archivo</button>
         <div class="tiny dim" style="margin:12px 0 6px">¿No tenés un archivo a mano?</div>
         <button class="btn ghost sm" onclick="invUseSample()">Usar una factura de ejemplo</button></div>
-      <div class="note mt">La lectura del documento es simulada. En el paso siguiente vas a revisar los datos y poder corregirlos antes de confirmar.</div>
+      <div class="note mt">Se leen el período, el consumo, el proveedor y el N° de factura del texto del PDF (una foto o un escaneo, solo donde el servidor tiene OCR). En el paso siguiente los revisás y corregís antes de confirmar.</div>
     </div>`;
   }
   const invNote = S.inv.reading ? `<div class="note reading"><span class="spin-ic">${ico('gear')}</span> Leyendo el documento…</div>`
-    : S.inv.simulated ? `<div class="note">${ico('info')} Lectura automática (simulada) — revisá los valores antes de confirmar.</div>`
+    : S.inv.simulated ? `<div class="note">${ico('info')} Factura de ejemplo: los valores son inventados para probar el flujo, no salen de un documento real.</div>`
     : `<div class="note">${ico('info')} ${esc(S.inv.readMessage||'Revisá los valores antes de confirmar.')}</div>`;
   return `<div class="modal-h"><div style="flex:1"><h3>Revisá los datos detectados</h3><div class="sub">${esc(site.name)} · ${esc(S.inv.fileName||'')}</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
   <div class="modal-b">
@@ -3643,7 +3650,7 @@ async function wmPickFile(input){
     if(d.qty) S.wm.qty=d.qty;
     if(d.operator) S.wm.operator=d.operator;
     if(d.doc) S.wm.doc=d.doc;
-    S.wm.treatment=d.treatment||''; S.wm.detected=false;
+    S.wm.treatment=d.treatment||''; S.wm.detected=!!d.treatment;
     S.wm.readMessage=result.message||'';
   }catch(e){
     S.wm.readMessage='No se pudo leer el documento: '+e.message;
@@ -3652,7 +3659,7 @@ async function wmPickFile(input){
 }
 function wmUseSample(){ S.wm.fileName='manifiesto_retiro.pdf'; wmExtract(); S.wm.simulated=true; S.wm.readMessage=''; S.wm.step=2; wmRerender(); }
 function wmBack(){ S.wm.step=1; wmRerender(); }
-function wmSet(k,v){ S.wm[k]=(k==='qty')?(+v||0):v; if(k==='treatment')wmRerender(); }
+function wmSet(k,v){ S.wm[k]=(k==='qty')?(+v||0):v; if(k==='treatment'){ S.wm.detected=false; wmRerender(); } }
 function wmConfirm(){
   if(!S.wm.treatment){ toast('Seleccioná el tipo de tratamiento.','⚠'); return; }
   if(!(S.wm.qty>0)){ toast('Ingresá una cantidad mayor a cero.','⚠'); return; }
@@ -3665,7 +3672,7 @@ function wmConfirm(){
     WASTECAT.push(stream); WCBI[id]=stream;
   } else stream=WCBI[S.wm.streamId];
   const r=addWasteRecord(stream,{period:S.wm.period,qty:S.wm.qty,date:S.wm.date,operator:S.wm.operator,doc:S.wm.doc,
-    treatment:S.wm.treatment,detected:S.wm.detected,site:stream.site});
+    treatment:S.wm.treatment,detected:S.wm.detected,site:stream.site,read:S.wm.simulated?'sample':''});
   closeModal();
   toast('Manifiesto cargado: '+nfv(S.wm.qty,0)+' kg → '+t(r.kg,3)+' tCO₂e en Alcance 3 · Cat. 5.','✓');
   render();
@@ -3688,7 +3695,7 @@ function wmModalHTML(){
         <button class="btn" onclick="document.getElementById('wmFile').click()">Elegir archivo</button>
         <div class="tiny dim" style="margin:12px 0 6px">¿No tenés un archivo a mano?</div>
         <button class="btn ghost sm" onclick="wmUseSample()">Usar un manifiesto de ejemplo</button></div>
-      <div class="note mt">La lectura del documento es simulada. En el paso siguiente vas a revisar los datos y confirmar el tipo de tratamiento.</div>
+      <div class="note mt">Se leen la fecha, la cantidad, el operador, el N° de manifiesto y el tratamiento del texto del PDF (una foto o un escaneo, solo donde el servidor tiene OCR). En el paso siguiente los revisás y confirmás el tipo de tratamiento.</div>
     </div>`;
   }
   const w = S.wm.streamId==='__new'?null:WCBI[S.wm.streamId];
@@ -3696,7 +3703,7 @@ function wmModalHTML(){
   const fidHit = S.wm.treatment ? (treatOpts.find(x=>x[0]===S.wm.treatment)||[])[1] : null;
   const factor = fidHit?FBI[fidHit]:null;
   const wmNote = S.wm.reading ? `<div class="note reading"><span class="spin-ic">${ico('gear')}</span> Leyendo el documento…</div>`
-    : S.wm.simulated ? `<div class="note">${ico('info')} Lectura automática (simulada) — revisá los valores antes de confirmar.</div>`
+    : S.wm.simulated ? `<div class="note">${ico('info')} Manifiesto de ejemplo: los valores son inventados para probar el flujo, no salen de un documento real.</div>`
     : `<div class="note">${ico('info')} ${esc(S.wm.readMessage||'Revisá los valores antes de confirmar.')}</div>`;
   return `<div class="modal-h"><div style="flex:1"><h3>Revisá los datos del manifiesto</h3><div class="sub">${esc(w?w.name:(S.wm.newName||'Residuo nuevo'))} · ${esc(S.wm.fileName||'')}</div></div><button class="btn ghost sm" onclick="closeModal()">✕</button></div>
   <div class="modal-b">
@@ -3769,7 +3776,7 @@ function bulkPeriodFromName(name){
 }
 function bulkClassify(row,res){
   const d=res.fields||{};
-  row.status='read'; row.msg=res.ok?'':(res.message||''); row.hints=res.hints||{}; row.kind=res.kind||'';
+  row.status='read'; row.readOk=!!res.ok; row.msg=res.ok?'':(res.message||''); row.hints=res.hints||{}; row.kind=res.kind||'';
   row.provider=d.provider||''; row.doc=d.doc||''; row.qty=+d.qty||0;
   row.period=d.period||(d.date?String(d.date).slice(0,7):'')||bulkPeriodFromName(row.name);
   if(row.kind==='waste'){ row.date=d.date||''; row.operator=d.operator||''; }
@@ -3884,12 +3891,12 @@ function bulkSave(){
   const ready=b.rows.filter(r=>r.include&&r.status!=='error'&&!bulkIssues(r).length); if(!ready.length) return;
   let kg=0, n=0; const groups=new Map();
   ready.forEach(r=>{ if(r.kind==='waste'){
-      const rec=addWasteRecord(WCBI[r.stream],{period:r.period,qty:r.qty,date:r.date||r.period+'-01',operator:r.operator,doc:r.doc||undefined,treatment:r.treatment,detected:r.detected,site:r.site});
+      const rec=addWasteRecord(WCBI[r.stream],{period:r.period,qty:r.qty,date:r.date||r.period+'-01',operator:r.operator,doc:r.doc||undefined,treatment:r.treatment,detected:r.detected,site:r.site,read:r.readOk?'document':''});
       kg+=rec.kg; n++;
     } else { const k=bulkKey(r); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(r); } });
   groups.forEach(list=>{ const r0=list[0];
     const rec=addInvoiceRecord(SBI[r0.site],r0.kind,{period:r0.period,qty:list.reduce((a,r)=>a+r.qty,0),provider:list.map(r=>r.provider).filter(Boolean)[0]||'',
-      doc:list.map(r=>r.doc).filter(Boolean).join(' + ')||undefined});
+      doc:list.map(r=>r.doc).filter(Boolean).join(' + ')||undefined,read:list.every(r=>r.readOk)?'document':''});
     kg+=rec.kg; n+=list.length; });
   // aprender los N° de cliente o suministro: solo los que en esta tanda aparecen en una única sede
   const seen=new Map();

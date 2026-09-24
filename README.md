@@ -103,7 +103,7 @@ Verificado en esta computadora: siete pruebas automáticas, prueba real contra P
 
 ## Límites heredados del prototipo
 
-Los conectores SAP/ERP y las lecturas de factura simuladas siguen identificados como simulaciones; este backend no convierte esos controles en integraciones externas reales. Los factores y sus fuentes se conservan como referencias de la V3.5, sin validación independiente ni certificación. El backend no incorpora OCR, gestión de evidencias binarias ni permisos por rol entre varios usuarios de una misma empresa.
+Los conectores SAP/ERP siguen identificados como simulaciones, igual que las facturas y manifiestos «de ejemplo» (la lectura de un documento subido es real: texto del PDF, u OCR donde está instalado); este backend no convierte esos controles en integraciones externas reales. Los factores y sus fuentes se conservan como referencias de la V3.5, sin validación independiente ni certificación. El backend no incorpora OCR, gestión de evidencias binarias ni permisos por rol entre varios usuarios de una misma empresa.
 
 Antes de utilizar el sistema para reportes oficiales, validar el catálogo y los criterios de incertidumbre. El cálculo actual reproduce la hipótesis de independencia entre registros del prototipo.
 
