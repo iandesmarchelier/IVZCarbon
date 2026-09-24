@@ -3497,16 +3497,23 @@ V.planta=f=>{
   const cards = SITES.map(site=>{
     const rs = query({...f,site:site.id});
     const a1 = sum(rs.filter(r=>r.scope===1)), a2 = sum(rs.filter(r=>r.scope===2));
-    const invs = REC.filter(r=>r.site===site.id&&r.src==='invoice'&&r.type!=='td').sort((a,b)=>a.p<b.p?1:-1).slice(0,4);
+    // todas las facturas del perímetro elegido (año y mes), las más recientes primero
+    const all = REC.filter(r=>r.site===site.id&&r.src==='invoice'&&r.type!=='td');
+    const invs = all.filter(r=>(f.year==='all'||r.p.slice(0,4)===String(f.year))&&(f.month==='all'||r.p.slice(5)===f.month)).sort((a,b)=>a.p<b.p?1:a.p>b.p?-1:0);
     const missing = curP && !REC.some(r=>r.site===site.id&&r.p===curP&&r.type==='elec');
-    return locCard(site,a1,a2,invs,missing,curP);
+    return locCard(site,a1,a2,invs,missing,curP,all.length-invs.length,f);
   }).join('');
   return head('Ubicaciones y facturas','Todas las sedes de la empresa — plantas, oficinas y depósitos. Cargar la factura de electricidad o de gas de cada una calcula al instante su Alcance 1 o 2, sin modelar equipo por equipo.',
     `<button class="btn" onclick="openBulkDocs()">${ico('upload')} Carga masiva de facturas y manifiestos</button><button class="btn primary" onclick="openModal(siteModalHTML())">${ico('plus')} Nueva ubicación</button>`)
   +`<div class="grid g2" data-tour="loc-cards">${cards}</div>
     <div class="note mt">Cargar una factura para un sitio y un período reemplaza cualquier estimación anterior de esa misma energía en ese período — nunca se suma, para que el total no quede duplicado.${secOn('energia')?' El detalle histórico por equipo sigue disponible en «Consumo energético».':''}</div>`;
 };
-function locCard(site,a1,a2,invs,missing,curP){
+S.locAll=S.locAll||{};
+const LOC_INV_SHOWN=6;
+function locInvToggle(siteId){ S.locAll[siteId]=!S.locAll[siteId]; render(); }
+function locCard(site,a1,a2,invs,missing,curP,elsewhere,f){
+  const open=S.locAll[site.id], shown=open?invs:invs.slice(0,LOC_INV_SHOWN);
+  const when=f.month!=='all'?pLabel(f.year+'-'+f.month):f.year==='all'?'':String(f.year);
   return `<div class="card loccard">
     <div class="lc-h"><div class="lc-ic">${ico(siteIcon(site.type))}</div>
       <div style="min-width:0;flex:1"><div class="lc-name">${esc(site.name)}</div>
@@ -3521,11 +3528,12 @@ function locCard(site,a1,a2,invs,missing,curP){
       <button class="btn sm" onclick="openInvoiceModal('${site.id}','elec')">${ico('bolt')} Factura de electricidad</button>
       <button class="btn sm" onclick="openInvoiceModal('${site.id}','gas')">${ico('flame')} Factura de gas natural</button>
     </div>
-    <div class="lc-inv"><div class="lc-inv-t">Facturas cargadas</div>
-      ${invs.length?invs.map(r=>`<div class="invrow clickable" onclick="trace('${r.rid}')">
+    <div class="lc-inv"><div class="lc-inv-t">Facturas cargadas${when?' en '+esc(when):''}${invs.length?' · '+invs.length:''}</div>
+      ${shown.length?shown.map(r=>`<div class="invrow clickable" onclick="trace('${r.rid}')">
         <span class="tiny strong">${esc(pLabel(r.p))}</span><span class="tiny dim">${r.type==='elec'?'Electricidad':'Gas natural'}</span>
         <span class="tiny num">${nfv(r.qty,0)} ${r.unit}</span><span class="tiny num strong">${t(r.kg,3)} t</span></div>`).join(''):
-        '<div class="tiny dim" style="padding:5px 0 2px">Todavía no se cargó ninguna factura para esta sede.</div>'}
+        `<div class="tiny dim" style="padding:5px 0 2px">${elsewhere?'Ninguna factura en este período ('+elsewhere+' en otros períodos: cambiá el año o el mes arriba).':'Todavía no se cargó ninguna factura para esta sede.'}</div>`}
+      ${invs.length>LOC_INV_SHOWN?`<button class="btn ghost sm" style="margin-top:6px" onclick="locInvToggle('${site.id}')">${open?'Ver menos':'Ver todas ('+invs.length+')'}</button>`:''}
     </div></div>`;
 }
 
