@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from .invoice_parser import parse_document
 from . import documents, features, inventory, matching, reports
 from .security import hash_password, verify_password, token_hash
-from .storage import SYSTEM, db, initialize, decode, database_url, event
+from .storage import SYSTEM, db, initialize, decode, database_url, event, isolated
 
 ROOT = Path(__file__).resolve().parent.parent
 DUMMY = hash_password('not-a-real-account')
@@ -630,7 +630,8 @@ def health():
     with db(SYSTEM) as s:
         s.execute('SELECT 1')
         similarity = matching.engine(s)
-    return {'status': 'ok', 'database': 'postgresql' if database_url() else 'sqlite-local', 'similarity': similarity}
+        isolation = 'row-level-security' if isolated(s) else 'off'
+    return {'status': 'ok', 'database': 'postgresql' if database_url() else 'sqlite-local', 'similarity': similarity, 'isolation': isolation}
 
 
 @app.get('/')

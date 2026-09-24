@@ -94,10 +94,23 @@ def _enter(conn, account):
         _tenant_role['ready'] = bool(conn.execute(
             'SELECT 1 FROM pg_roles r WHERE r.rolname=%s AND pg_has_role(current_user, r.oid, %s)',
             (TENANT_ROLE, _switch(conn))).fetchone())
+        if not _tenant_role['ready']:
+            logging.getLogger(__name__).error('Row-level security is NOT enforced: %s is missing or cannot be used.', TENANT_ROLE)
     if _tenant_role['ready']:
         conn.execute("SELECT set_config('role', %s, true), set_config('ivz.account', %s, true)", (TENANT_ROLE, account))
     else:
         conn.execute("SELECT set_config('ivz.account', %s, true)", (account,))
+
+
+def isolated(s):
+    """Whether client connections are confined by row-level security; /health reports it."""
+    if not s.postgres:
+        return False
+    role = s.execute('SELECT pg_has_role(current_user, oid, ?) AS ok FROM pg_roles WHERE rolname=?', (_switch(s.conn), TENANT_ROLE)).fetchone()
+    exposed = s.execute("SELECT 1 FROM information_schema.columns c JOIN pg_class t ON t.relname=c.table_name "
+                        "AND t.relnamespace=current_schema()::regnamespace WHERE c.table_schema=current_schema() "
+                        "AND c.column_name='account' AND NOT t.relrowsecurity").fetchone()
+    return bool(role and role['ok']) and not exposed
 
 
 def _switch(conn):

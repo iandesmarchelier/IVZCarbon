@@ -78,6 +78,7 @@ class PostgresTests(base.ApiTests):
         self.assertGreaterEqual(len(tables), 12)
         self.assertEqual(tables - secured, set())
         self.assertEqual(dict(role), {'rolsuper': False, 'rolbypassrls': False})
+        self.assertEqual(self.client.get('/health').json()['isolation'], 'row-level-security')
 
     def test_a_query_without_the_account_filter_sees_only_its_own_rows(self):
         ids = self.fill_both_accounts()
