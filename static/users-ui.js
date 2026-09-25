@@ -12,8 +12,9 @@ window.IVZUsers = (() => {
     Object.entries(ROLES).map(([k, v]) => '<option value="' + k + '"' + (k === value ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>';
 
   /* base: '/api/users' or '/api/admin/accounts/<id>/users'; headers: the app's request header;
-     me: the signed-in username, marked as «vos». */
-  function mount(box, {base, headers, me = ''}) {
+     me: the signed-in username, marked as «vos»; resets: whether new passwords can be given here
+     (only in Administración: a company's admins cannot change passwords). */
+  function mount(box, {base, headers, me = '', resets = false}) {
     async function call(path = '', method = 'GET', body) {
       const r = await fetch(base + path, {method, credentials: 'same-origin', cache: 'no-store',
         headers: {'Content-Type': 'application/json', ...headers}, body: body === undefined ? undefined : JSON.stringify(body)});
@@ -31,13 +32,14 @@ window.IVZUsers = (() => {
       p.querySelector('[data-u-copy]').onclick = () => navigator.clipboard.writeText(password).catch(() => {});
     };
     function render(list) {
-      box.innerHTML = '<p style="margin:0 0 8px;font-size:12.5px;color:' + muted + '">' + HELP + '</p>' +
+      box.innerHTML = '<p style="margin:0 0 8px;font-size:12.5px;color:' + muted + '">' + HELP +
+        (resets ? '' : ' Si alguien necesita una contraseña nueva, pedila a Invenzis.') + '</p>' +
         '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">' + list.map(u =>
           '<tr data-u="' + esc(u.id) + '" style="border-top:1px solid ' + line + (u.active ? '' : ';opacity:.6') + '">' +
           '<td style="padding:7px 6px 7px 0"><b>' + esc(u.username) + '</b>' + (u.username === me ? ' <span style="color:' + muted + '">(vos)</span>' : '') +
           (u.active ? '' : '<br><small style="color:' + bad + '">Desactivado</small>') + '</td>' +
           '<td style="padding:7px 6px">' + roleSelect(u.role, 'data-u-role aria-label="Rol de ' + esc(u.username) + '"') + '</td>' +
-          '<td style="padding:7px 0;text-align:right;white-space:nowrap"><button type="button" data-u-reset style="' + button + '">Nueva contraseña</button> ' +
+          '<td style="padding:7px 0;text-align:right;white-space:nowrap">' + (resets ? '<button type="button" data-u-reset style="' + button + '">Nueva contraseña</button> ' : '') +
           '<button type="button" data-u-active="' + (u.active ? 0 : 1) + '" style="' + button + (u.active ? ';color:' + bad : '') + '">' + (u.active ? 'Desactivar' : 'Reactivar') + '</button></td></tr>').join('') +
         '</table></div>' +
         '<form data-u-add style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
@@ -65,7 +67,7 @@ window.IVZUsers = (() => {
           if (!active && !confirm('¿Desactivar a ' + user.username + '? Se cierran sus sesiones y no puede volver a entrar hasta que lo reactives.')) return;
           try { await call('/' + encodeURIComponent(id), 'PUT', {active}); await load(); } catch (err) { say(err.message); }
         };
-        row.querySelector('[data-u-reset]').onclick = async () => {
+        if (resets) row.querySelector('[data-u-reset]').onclick = async () => {
           if (!confirm('¿Generar una nueva contraseña para ' + user.username + '? La actual deja de funcionar y se cierran sus sesiones.')) return;
           try { const r = await call('/' + encodeURIComponent(id) + '/reset-password', 'POST'); reveal(user.username, r.password); } catch (err) { say(err.message); }
         };

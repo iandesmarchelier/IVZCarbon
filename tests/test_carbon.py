@@ -636,13 +636,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.login_as('luis',luis['password']).status_code,403)
         self.login_as('ana',ana['password'])
         self.client.put('/api/users/'+luis['id'],headers=self.h,json={'active':True})
-        fresh=self.client.post('/api/users/'+luis['id']+'/reset-password',headers=self.h).json()['password']
-        self.assertEqual(self.login_as('luis',luis['password']).status_code,401)
-        self.assertEqual(self.login_as('luis',fresh).status_code,200)
+        self.assertEqual(self.login_as('luis',luis['password']).status_code,200)
+        # Only Invenzis gives new passwords, never a company's admin.
+        self.login_as('ana',ana['password'])
+        self.assertEqual(self.client.post('/api/users/'+luis['id']+'/reset-password',headers=self.h).status_code,404)
+        self.assertEqual(self.client.post('/api/admin/accounts/'+one+'/users/'+luis['id']+'/reset-password',headers=self.h).status_code,403)
+        self.assertEqual(self.login_as('luis',luis['password']).status_code,200)
         # A company never reaches the users of another one.
         self.login('two')
         self.assertEqual(self.client.put('/api/users/'+luis['id'],headers=self.h,json={'active':False}).status_code,404)
-        self.assertEqual(self.client.post('/api/users/'+one+'/reset-password',headers=self.h).status_code,404)
         self.assertEqual([u['username'] for u in self.client.get('/api/users').json()],['two'])
 
     def test_invenzis_admin_manages_the_users_of_a_client(self):
@@ -662,6 +664,7 @@ class ApiTests(unittest.TestCase):
         me=self.client.get('/api/me').json()
         self.assertEqual((me['username'],me['access'],me['impersonating']),('Administrador de Invenzis','admin',True))
         self.assertEqual(len(self.client.get('/api/users').json()),2)
+        self.assertEqual(self.login_as('ana',ana['password']).status_code,401)
         self.assertEqual(self.login_as('ana',fresh).status_code,200)
         self.assertEqual(self.client.get('/api/admin/accounts').status_code,403)
 

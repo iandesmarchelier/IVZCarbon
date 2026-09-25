@@ -644,14 +644,6 @@ def change_user(user_id: str, body: UserChange, request: Request):
     return changed
 
 
-@app.post('/api/users/{user_id}/reset-password')
-def reset_user_password(user_id: str, request: Request):
-    user = company_admin(request)
-    with db(user['id']) as s:
-        username, password = users.reset_password(s, user['id'], user_id)
-        event(s, user['id'], 'reset_password', 0, {'username': username}, acting_as(user))
-    return {'password': password}
-
 
 # The same, for Invenzis' administrator on any client.
 @app.get('/api/admin/accounts/{account_id}/users')

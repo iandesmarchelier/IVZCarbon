@@ -85,7 +85,7 @@ dialog::backdrop{background:#0004}
 <dialog id="cfgDialog"><div class="dlg-b" style="padding-bottom:6px"><h3 id="cfgTitle">Configuración</h3><div class="sub" style="color:var(--muted);font-size:13px">Lo que se apaga desaparece del menú del cliente y queda bloqueado en el servidor. Los datos no se borran: al volver a encenderlo, todo sigue ahí.</div></div>
   <div class="cfg-b" id="cfgBody"></div>
   <div class="dlg-f"><p id="cfgErr" style="flex:1;margin:0"></p><button class="primary" id="cfgClose">Listo</button></div></dialog>
-<script src="/users-ui.js?v=20260925-users"></script>
+<script src="/users-ui.js?v=20260925-resets"></script>
 <dialog id="pwDialog"><div class="dlg-b"><h3 id="pwTitle"></h3><p>Copiala ahora — no se va a poder ver de nuevo.</p><div class="pw" id="pwValue"></div></div><div class="dlg-f"><button id="pwCopy">Copiar</button><button class="primary" id="pwClose">Listo</button></div></dialog>
 <script>
 async function api(path,options={}){
@@ -168,7 +168,7 @@ async function openConfig(id,name){
   // The users keep their own box: switching a section on or off does not redraw them.
   cfgBody.innerHTML='<h4>Usuarios</h4><div id="cfgUsers"></div><div id="cfgMain"></div>';
   renderConfig(); document.getElementById('cfgDialog').showModal();
-  IVZUsers.mount(document.getElementById('cfgUsers'),{base:'/api/admin/accounts/'+encodeURIComponent(id)+'/users',headers:{'X-IVZ-Carbon':'1'}});
+  IVZUsers.mount(document.getElementById('cfgUsers'),{base:'/api/admin/accounts/'+encodeURIComponent(id)+'/users',headers:{'X-IVZ-Carbon':'1'},resets:true});
 }
 cfgBody.addEventListener('click',async e=>{
   const sw=e.target.closest('.sw[data-kind]'), revoke=e.target.closest('[data-revoke]'), mint=e.target.closest('[data-newtoken]');

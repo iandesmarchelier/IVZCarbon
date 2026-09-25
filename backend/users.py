@@ -5,7 +5,8 @@ its id. Each user has its own login and one role in that company:
   admin   everything, including managing these users
   editor  loads and edits data, generates and approves reports, closes years
   viewer  looks and downloads; app.account() refuses any other request
-An administrator of Invenzis manages them from /admin; a company's own admins, from their account.
+An administrator of Invenzis manages them from /admin; a company's own admins, from their account,
+except passwords: only Invenzis' administrator gives a user a new one (reset_password).
 Users are deactivated, never deleted, so the account keeps who did what.
 """
 import secrets
