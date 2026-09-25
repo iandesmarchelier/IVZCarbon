@@ -20,10 +20,21 @@ Cada cuenta en el formato anterior (todo en `carbon_states`) se convierte sola l
 
 Excluir de publicación `data/`, `.env`, bases locales, credenciales, archivos dump y el runtime portátil de PostgreSQL. El esquema se crea automáticamente en la base remota al arrancar.
 
+## Contenedor (Azure, SAP BTP u otro hosting con Docker)
+
+El `Dockerfile` arma la misma aplicación con Tesseract y el idioma español, que Vercel no puede instalar: ahí las facturas y manifiestos en foto o PDF escaneado se leen con OCR en vez de responder `ocr-unavailable`. Vercel ignora el Dockerfile, así que ambos despliegues conviven.
+
+- Variables: `CARBON_DATABASE_URL` (obligatoria; fuera de Vercel no se lee `DATABASE_URL`), `CARBON_BOOTSTRAP_PASSWORD_HASH` y `CARBON_ADMIN_PASSWORD_HASH` si corresponden. La imagen ya trae `CARBON_ENV=production`: cookies Secure y SQLite bloqueado.
+- Puerto: 8001, o el que indique la plataforma en `PORT` (Cloud Foundry, App Service).
+- La imagen no guarda nada en disco: datos y documentos van a PostgreSQL, así que se puede reiniciar o escalar sin perder información.
+- Fuera de Vercel el límite por guardado sube de 4 MB a 32 MB; el guardado por partes sigue funcionando igual.
+- Prueba local con Docker Desktop: copiar `.env.example` a `.env`, completar `CARBON_DB_PASSWORD` y correr `docker compose up --build` (http://localhost:8001).
+- `.github/workflows/contenedor.yml` arma la imagen en cada push, corre todas las pruebas dentro de ella (incluida la lectura OCR de una factura) y comprueba `/health`.
+
 ## Verificación
 
 1. Confirmar despliegue Ready en Vercel.
-2. Verificar `/health`: `status=ok`, `database=postgresql`.
+2. Verificar `/health`: `status=ok`, `database=postgresql`. En el contenedor, además `ocr=tesseract-spa` (en Vercel es `off`).
 3. Ingresar con la cuenta demo y comprobar que `/api/state` esté protegido sin sesión.
 4. Guardar un cambio y recargar; comprobar persistencia.
 5. Confirmar que no aparece la barra inferior de guardado.

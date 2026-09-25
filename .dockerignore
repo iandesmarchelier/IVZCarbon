@@ -1,0 +1,13 @@
+.git
+.github
+.env
+.env.*
+data
+__pycache__
+*.pyc
+*.sqlite*
+*.dump
+tests
+scripts
+.venv
+.deps

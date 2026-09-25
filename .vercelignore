@@ -10,6 +10,8 @@ scripts
 *.pyc
 *.sqlite*
 *.dump
+.github
 Dockerfile
+.dockerignore
 compose.yaml
 *.ps1

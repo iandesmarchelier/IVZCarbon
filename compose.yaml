@@ -1,0 +1,29 @@
+# Prueba local del contenedor con su propio PostgreSQL: docker compose up --build
+# Requiere CARBON_DB_PASSWORD en un archivo .env junto a este (ver .env.example).
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: carbon
+      POSTGRES_DB: carbon
+      POSTGRES_PASSWORD: ${CARBON_DB_PASSWORD:?Definí CARBON_DB_PASSWORD en .env}
+    volumes:
+      - carbon_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U carbon -d carbon"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      CARBON_DATABASE_URL: postgresql://carbon:${CARBON_DB_PASSWORD}@db:5432/carbon
+      CARBON_ENV: ${CARBON_ENV:-local}
+      CARBON_BOOTSTRAP_PASSWORD_HASH: ${CARBON_BOOTSTRAP_PASSWORD_HASH:-}
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  carbon_pg:

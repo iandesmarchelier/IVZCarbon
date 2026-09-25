@@ -1,0 +1,47 @@
+# Arma la imagen Docker, corre todas las pruebas dentro de ella (SQLite, PostgreSQL con
+# row-level security y OCR con Tesseract) y la levanta como en producción para comprobar /health.
+name: Contenedor
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  contenedor:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: carbon
+          POSTGRES_PASSWORD: carbon
+          POSTGRES_DB: carbon_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U carbon -d carbon_test"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir la imagen
+        run: docker build -t ivz-carbon .
+      - name: Tesseract y el idioma español están en la imagen
+        run: docker run --rm ivz-carbon tesseract --list-langs | grep -x spa
+      - name: Pruebas dentro del contenedor
+        run: >
+          docker run --rm --network host -v "$PWD/tests:/app/tests:ro"
+          -e CARBON_ENV=test
+          -e CARBON_TEST_ISOLATION_URL=postgresql://carbon:carbon@localhost:5432/carbon_test
+          -e CARBON_TEST_POSTGRES_URL=postgresql://carbon:carbon@localhost:5432/carbon_test
+          ivz-carbon python -m unittest discover -s tests -v
+      - name: Arrancar como en producción y comprobar /health
+        run: |
+          docker run -d --name carbon --network host -e PORT=8080 \
+            -e CARBON_DATABASE_URL=postgresql://carbon:carbon@localhost:5432/carbon_test ivz-carbon
+          for i in $(seq 1 30); do curl -fs http://localhost:8080/health > health.json && break; sleep 2; done
+          cat health.json
+          jq -e '.status == "ok" and .database == "postgresql" and .isolation == "row-level-security" and .ocr == "tesseract-spa"' health.json
+          curl -fs http://localhost:8080/ | grep -q 'IVZ Carbon'
+          test "$(docker exec carbon whoami)" = carbon
+      - name: Registro del contenedor
+        if: always()
+        run: docker logs carbon || true

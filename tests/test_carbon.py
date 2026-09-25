@@ -18,7 +18,7 @@ from backend.metrics import compute, normalize
 from backend.storage import SYSTEM, db, database_url, decode
 from backend.security import hash_password, verify_password
 from backend import features, matching
-from backend.invoice_parser import parse_document
+from backend.invoice_parser import ocr_engine, parse_document
 from backend.storage import Session
 
 SEED = json.loads((ROOT/'seed.json').read_text(encoding='utf8'))
@@ -144,6 +144,17 @@ class DocumentReadingTests(unittest.TestCase):
         self.assertEqual((unknown['ok'], unknown['kind']), (False, None))
         with self.assertRaises(ValueError):
             parse_document(b'', 'x.pdf', 'other')
+
+    @unittest.skipIf(ocr_engine() == 'off', 'Tesseract no está instalado (sí en el contenedor)')
+    def test_photographed_bill_is_read_with_tesseract(self):
+        from PIL import Image, ImageDraw, ImageFont
+        image = Image.new('RGB', (1800, 420), 'white')
+        ImageDraw.Draw(image).multiline_text((40, 30), self.BILL, fill='black', font=ImageFont.load_default(size=34), spacing=18)
+        photo = io.BytesIO()
+        image.save(photo, 'PNG')
+        bill = parse_document(photo.getvalue(), 'factura.png', 'auto')
+        self.assertEqual(ocr_engine(), 'tesseract-spa')
+        self.assertEqual((bill['kind'], bill['fields']['period'], bill['fields']['qty']), ('elec', '2025-08', 16814.84))
 
 
 class ApiTests(unittest.TestCase):

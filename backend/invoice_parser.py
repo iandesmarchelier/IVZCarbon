@@ -11,6 +11,7 @@ de residuos no tiene todavía un proveedor de referencia: es genérico desde
 el inicio y sus campos siempre se marcan de confianza baja.
 """
 import re
+from functools import lru_cache
 from io import BytesIO
 
 try:
@@ -49,6 +50,18 @@ def _ddmmyyyy_to_period(s):
 
 class OcrUnavailable(Exception):
     pass
+
+
+@lru_cache(maxsize=1)
+def ocr_engine():
+    """'tesseract-spa' en el contenedor, 'tesseract' sin el idioma español, 'off' donde no hay Tesseract (Vercel)."""
+    if pytesseract is None:
+        return 'off'
+    try:
+        languages = pytesseract.get_languages(config='')
+    except Exception:
+        return 'off'
+    return 'tesseract-spa' if 'spa' in languages else 'tesseract'
 
 
 def _ocr_image(img):
