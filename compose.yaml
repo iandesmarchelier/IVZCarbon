@@ -1,5 +1,6 @@
 # Prueba local del contenedor con su propio PostgreSQL: docker compose up --build
 # Requiere CARBON_DB_PASSWORD en un archivo .env junto a este (ver .env.example).
+name: ivz-carbon
 services:
   db:
     image: postgres:17
