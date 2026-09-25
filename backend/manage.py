@@ -1,9 +1,8 @@
 import argparse
 import getpass
-import uuid
-from datetime import datetime, timezone
 from .security import hash_password
 from .storage import SYSTEM, initialize, db
+from .users import create_account
 
 
 def create_user(username, company, password):
@@ -13,9 +12,7 @@ def create_user(username, company, password):
         raise ValueError('Usuario y empresa obligatorios.')
     initialize()
     with db(SYSTEM) as s:
-        s.execute('INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?)',
-                  (str(uuid.uuid4()), username.strip().lower(), company.strip(), hash_password(password),
-                   'client', True, datetime.now(timezone.utc).isoformat()))
+        create_account(s, username, company, 'client', hash_password(password))
 
 
 if __name__ == '__main__':

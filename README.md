@@ -87,6 +87,10 @@ Documentación interactiva: `/docs`. Las operaciones de escritura requieren `X-I
 
 Para restaurar un respaldo mediante API: obtener la revisión actual de `/api/state`, enviar esa revisión junto con `state` del respaldo mediante `PUT /api/state`. Descargar antes la versión actual. Un conflicto 409 requiere revisar qué versión conservar; no reintentar automáticamente con la revisión nueva. Un 423 indica que el respaldo cambia registros de un año cerrado.
 
+## Usuarios y roles
+
+Usuarios: cada cuenta es una empresa y puede tener varios usuarios, cada uno con su login y un rol. **Administrador** hace todo, incluido gestionar los usuarios; **editor** carga datos, genera reportes y cierra años; **lector** solo mira y descarga (el servidor le rechaza cualquier otra solicitud y la pantalla deshace lo que cambie). Los gestiona el administrador de Invenzis desde Administración → Configurar, y los administradores de cada empresa desde Configuración de la cuenta. Las contraseñas se generan y se muestran una sola vez; un usuario se desactiva, nunca se borra, y la empresa siempre conserva al menos un administrador activo. Las cuentas anteriores a este cambio conservan su login como primer administrador. Los eventos guardan quién hizo cada cosa (`actor`). El componente de pantalla es `users-ui.js`, compartido por ambas aplicaciones (en IVZ Carbon, `static/users-ui.js`).
+
 ## Aislamiento entre clientes
 
 Aislamiento entre clientes: además del filtro por cuenta de cada consulta, PostgreSQL lo hace cumplir con row-level security. Cada conexión nombra su cuenta (`db(cuenta)`; `db(SYSTEM)` queda para el ingreso, el administrador y los scripts). La de un cliente trabaja como el rol `ivz_carbon_tenant`, que solo ve y escribe filas de esa cuenta en toda tabla con columna `account` (y su propia fila en `carbon_accounts`), aunque una consulta olvide el `WHERE account=?`. Al arrancar, la aplicación crea ese rol y las políticas que falten, así que el usuario de la base necesita permiso para crear roles (el dueño de Neon lo tiene). Si no puede, la aplicación sigue funcionando sin esa protección y lo registra en el log como «Row-level security is NOT enforced».

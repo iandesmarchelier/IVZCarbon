@@ -87,7 +87,8 @@
     throw Error('El inventario cambió mientras se cargaba. Recargá la página.');
   }
   let company='IVZ Carbon';
-  let username='', impersonating=false;
+  let username='', impersonating=false, access='admin';
+  const readOnly=()=>access==='viewer';
   /* Closed years keep their results and cannot be edited until an administrator reopens them.
      The server enforces it; the screen undoes such an edit right away instead of failing to save. */
   let closures=[], closedYears=new Set();
@@ -118,7 +119,7 @@
     const byYear=Object.fromEntries(closures.map(c=>[c.year,c]));
     box.innerHTML='<p style="margin-bottom:4px"><b>Cierre de años</b></p><p style="margin-top:0;color:#65786c;font-size:12.5px">Un año cerrado conserva sus resultados y ya no se puede editar. Solo un administrador de Invenzis puede reabrirlo.</p>'+
       years.map(y=>{const c=byYear[y];return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-top:1px solid #e3ebe5"><span><b>'+y+'</b> · '+(c?'Cerrado el '+esc(new Date(c.closedAt).toLocaleDateString('es'))+' por '+esc(c.closedBy):'Abierto')+'</span>'+
-        (c?(impersonating?'<button class="btn" data-reopen="'+y+'">Reabrir</button>':''):'<button class="btn" data-close="'+y+'">Cerrar año</button>')+'</div>';}).join('');
+        (readOnly()?'':c?(impersonating?'<button class="btn" data-reopen="'+y+'">Reabrir</button>':''):'<button class="btn" data-close="'+y+'">Cerrar año</button>')+'</div>';}).join('');
     for(const b of box.querySelectorAll('[data-close]'))b.onclick=()=>closeYear(+b.dataset.close,b);
     for(const b of box.querySelectorAll('[data-reopen]'))b.onclick=()=>reopenYear(+b.dataset.reopen,b);
   }
@@ -145,8 +146,11 @@
     catch(e){button.disabled=false;document.getElementById('account-error').textContent=e.message;}
   }
   document.getElementById('btn-user').onclick=()=>{
-    openModal('<div class="modal-h"><h3>Configuración de la cuenta</h3></div><div class="modal-b"><p><b>Usuario</b><br>'+esc(username)+'</p><p><b>Organización</b><br>'+esc(company)+'</p><div id="account-years"></div><p id="account-error" role="alert"></p></div><div class="modal-f"><button class="btn" onclick="closeModal()">Volver</button><button class="btn" id="account-logout">Cerrar sesión</button></div>',{narrow:true});
+    openModal('<div class="modal-h"><h3>Configuración de la cuenta</h3></div><div class="modal-b"><p><b>Usuario</b><br>'+esc(username)+'</p><p><b>Organización</b><br>'+esc(company)+'</p><p><b>Rol</b><br>'+esc(IVZUsers.ROLES[access]||access)+'</p><div id="account-years"></div>'+
+      (access==='admin'?'<p style="margin-bottom:4px"><b>Usuarios de la empresa</b></p><div id="account-users"></div>':'')+'<p id="account-error" role="alert"></p></div><div class="modal-f"><button class="btn" onclick="closeModal()">Volver</button><button class="btn" id="account-logout">Cerrar sesión</button></div>',{narrow:true});
     renderYears();
+    const people=document.getElementById('account-users');
+    if(people)IVZUsers.mount(people,{base:'/api/users',headers:{'X-IVZ-Carbon':'1'},me:username});
     document.getElementById('account-logout').onclick=async event=>{
       const button=event.currentTarget;button.disabled=true;
       try{
@@ -192,10 +196,20 @@
   window.carbonUser=()=>username;
   window.carbonClosedYears=()=>closedYears;
   function download(value,name){const a=document.createElement('a');const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  // A viewer can look but not change: an edit on screen is undone instead of being sent (the server refuses it anyway).
+  function undoForViewer(){
+    if(!diff().any)return true;
+    const saved=JSON.parse(base.catalogue), keep={view:S.view,f:S.f,node:S.node};
+    for(const kind of Object.keys(ROWS))saved[kind]=base.ids[kind].map(id=>JSON.parse(base.rows[kind].get(id)));
+    hydrate(saved);Object.assign(S,keep);render();
+    toast('Tu usuario es de solo lectura: los cambios no se guardan.','!');
+    return true;
+  }
   let pendingSave=null;
   async function save(){
     if(busy){await pendingSave;return save();}
     if(!ready||blocked)return false;
+    if(readOnly())return undoForViewer();
     enforceClosed();
     const {any,out,next}=diff();
     if(!any)return true;
@@ -234,11 +248,13 @@
       username=user.username;
       if(user.features)FEATURES=user.features;  // secciones e integraciones habilitadas por el administrador
       impersonating=!!user.impersonating;
+      access=user.access||'viewer';
       document.getElementById('profile-name').textContent=username;
-      document.getElementById('profile-company').textContent=company;
+      document.getElementById('profile-company').textContent=company+(readOnly()?' · Solo lectura':'');
       document.getElementById('profile-avatar').textContent=username.slice(0,2).toUpperCase();
       if(user.impersonating)showImpersonationBar();
       if(result.state){activate(result);return;}
+      if(readOnly()){gate.textContent='La empresa todavía no empezó su inventario. Pedile a un administrador o editor que lo inicie.';return;}
       gate.innerHTML='<section style="max-width:510px;background:white;border-radius:16px;padding:36px"><h1>Tu inventario de carbono</h1><p>Elegí cómo empezar. La biblioteca de factores de referencia queda disponible en ambas opciones.</p><button class="btn primary" id="carbon-empty">Empezar vacío</button> <button class="btn" id="carbon-demo">Explorar con datos demo</button><p id="carbon-init-error" role="alert"></p></section>';
       for(const mode of ['empty','demo'])document.getElementById('carbon-'+mode).onclick=async()=>{for(const b of gate.querySelectorAll('button'))b.disabled=true;try{await api('/api/initialize',{method:'POST',body:JSON.stringify({mode})});activate(await loadInventory())}catch(e){document.getElementById('carbon-init-error').textContent=e.message;for(const b of gate.querySelectorAll('button'))b.disabled=false;}};
     }catch(e){gate.textContent='No se pudo cargar el inventario: '+e.message;}

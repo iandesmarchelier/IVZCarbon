@@ -103,7 +103,7 @@ class PostgresTests(base.ApiTests):
             for table in self.account_tables():
                 self.assertEqual(s.execute(f'DELETE FROM {table} WHERE account=?', (two,)).rowcount, 0, table)
             self.assertEqual(s.execute("UPDATE carbon_accounts SET company='x' WHERE id=?", (two,)).rowcount, 0)
-        for sql, args in (("INSERT INTO carbon_events VALUES (?,?,'x',0,'x',?)", (uuid.uuid4().hex, two, '{}')),  # a row for another account
+        for sql, args in (("INSERT INTO carbon_events (id,account,action,revision,created,details) VALUES (?,?,'x',0,'x',?)", (uuid.uuid4().hex, two, '{}')),  # a row for another account
                           ('UPDATE carbon_reports SET account=?', (two,))):                                   # moving its own rows to another
             with self.subTest(sql=sql), self.assertRaises(psycopg.errors.InsufficientPrivilege), db(one) as s:
                 s.execute(sql, args)

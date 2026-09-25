@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse,
 from pydantic import BaseModel, Field
 
 from .invoice_parser import ocr_engine, parse_document
-from . import documents, features, inventory, matching, reports
+from . import documents, features, inventory, matching, reports, users
 from .security import hash_password, verify_password, token_hash
 from .storage import SYSTEM, db, initialize, decode, database_url, event, isolated
 
@@ -51,19 +51,43 @@ async def guard(request: Request, call_next):
     return response
 
 
+IMPERSONATOR = 'Administrador de Invenzis'
+
+
 def account(request):
+    """The signed-in user: id and company are its account's (the tenant), username and access its own.
+
+    role is 'admin' for Invenzis' own account. A viewer can only read: its other requests stop here.
+    An administrator working inside a client's account has no user there and acts as its admin."""
     with db(SYSTEM) as s:
-        row = s.execute('SELECT a.id,a.username,a.company,a.role,a.active,t.impersonated_by FROM carbon_accounts a JOIN carbon_sessions t ON t.account=a.id WHERE t.token=? AND t.expires>?',
+        row = s.execute('SELECT a.id,a.company,a.role,a.active,t.impersonated_by,u.id AS user_id,u.username,u.role AS access,'
+                        'u.active AS user_active FROM carbon_sessions t JOIN carbon_accounts a ON a.id=t.account '
+                        'LEFT JOIN carbon_users u ON u.id=t.user_id AND u.account=t.account WHERE t.token=? AND t.expires>?',
                         (token_hash(request.cookies.get('ivz_carbon_session', '')), time.time())).fetchone()
     if not row or not row['active']:
         raise HTTPException(401, 'Ingresá a tu cuenta de IVZ Carbon.')
-    return dict(row)
+    user = dict(row)
+    if user['impersonated_by']:
+        user.update(username=IMPERSONATOR, access='admin')
+    elif not user['user_id'] or not user['user_active']:
+        raise HTTPException(401, 'Ingresá a tu cuenta de IVZ Carbon.')
+    if user['access'] == 'viewer' and request.method not in ('GET', 'HEAD'):
+        raise HTTPException(403, 'Tu usuario es de solo lectura.')
+    return user
 
 
 def require_admin(request):
     user = account(request)
-    if user['role'] != 'admin':
+    if user['role'] != 'admin' or user['access'] != 'admin':
         raise HTTPException(403, 'Necesitás permisos de administrador.')
+    return user
+
+
+def company_admin(request):
+    """A user who manages the other users of its company."""
+    user = account(request)
+    if user['access'] != 'admin':
+        raise HTTPException(403, 'Solo un administrador de la empresa puede gestionar usuarios.')
     return user
 
 
@@ -91,15 +115,12 @@ def bootstrap_account():
     """Provision the initial accounts from secret hashes; never reset an existing user."""
     now = datetime.now(timezone.utc).isoformat()
     digest = os.getenv('CARBON_BOOTSTRAP_PASSWORD_HASH')
-    if digest:
-        with db(SYSTEM) as s:
-            s.execute("INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?) ON CONFLICT(username) DO NOTHING",
-                      (str(uuid.uuid4()), 'demo', 'IVZ Carbon', digest, 'client', True, now))
-    admin_digest = os.getenv('CARBON_ADMIN_PASSWORD_HASH')
-    if admin_digest:
-        with db(SYSTEM) as s:
-            s.execute("INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?) ON CONFLICT(username) DO NOTHING",
-                      (str(uuid.uuid4()), 'admin', 'Administración IVZ Carbon', admin_digest, 'admin', True, now))
+    for username, company, role, digest in (('demo', 'IVZ Carbon', 'client', digest),
+                                            ('admin', 'Administración IVZ Carbon', 'admin', os.getenv('CARBON_ADMIN_PASSWORD_HASH'))):
+        if digest:
+            with db(SYSTEM) as s:
+                if not s.execute('SELECT 1 FROM carbon_accounts WHERE username=?', (username,)).fetchone():
+                    users.create_account(s, username, company, role, digest)
 
 
 class Login(BaseModel):
@@ -115,20 +136,23 @@ def login(body: Login, response: Response):
             'attempts=CASE WHEN carbon_login_limits.reset_at<? THEN 1 ELSE carbon_login_limits.attempts+1 END, '
             'reset_at=CASE WHEN carbon_login_limits.reset_at<? THEN ? ELSE carbon_login_limits.reset_at END RETURNING attempts',
             (name, now+900, now, now, now+900)).fetchone()
-        user = s.execute('SELECT * FROM carbon_accounts WHERE username=?', (name,)).fetchone()
+        user = s.execute('SELECT u.id,u.account,u.username,u.password,u.active,a.active AS account_active,a.company FROM carbon_users u '
+                         'JOIN carbon_accounts a ON a.id=u.account WHERE u.username=?', (name,)).fetchone()
     if limits['attempts'] > 10:
         raise HTTPException(429, 'Demasiados intentos. Esperá 15 minutos.')
     valid = verify_password(body.password, user['password'] if user else DUMMY)
     if not user or not valid:
         raise HTTPException(401, 'Usuario o contraseña incorrectos.')
-    if not user['active']:
+    if not user['account_active']:
         raise HTTPException(403, 'Esta cuenta fue desactivada.')
+    if not user['active']:
+        raise HTTPException(403, 'Tu usuario fue desactivado. Pedile al administrador de tu empresa que lo reactive.')
     token = secrets.token_urlsafe(32)
     with db(SYSTEM) as s:
         s.execute('DELETE FROM carbon_sessions WHERE expires<?', (now,))
-        s.execute('INSERT INTO carbon_sessions (token,account,expires) VALUES (?,?,?)', (token_hash(token), user['id'], now+28800))
+        s.execute('INSERT INTO carbon_sessions (token,account,expires,user_id) VALUES (?,?,?,?)', (token_hash(token), user['account'], now+28800, user['id']))
         s.execute('DELETE FROM carbon_login_limits WHERE username=?', (name,))
-        event(s, user['id'], 'login', 0, {})
+        event(s, user['account'], 'login', 0, {}, user['username'])
     response.set_cookie('ivz_carbon_session', token, httponly=True, samesite='strict',
                         secure=os.getenv('CARBON_ENV') == 'production' or bool(os.getenv('VERCEL')), max_age=28800)
     return {'company': user['company']}
@@ -147,8 +171,8 @@ def me(request: Request):
     user = account(request)
     with db(user['id']) as s:
         switches = features.of(s, user['id'])
-    return {'id': user['id'], 'username': user['username'], 'company': user['company'],
-            'role': user['role'], 'impersonating': bool(user.get('impersonated_by')), 'features': switches}
+    return {'id': user['id'], 'username': user['username'], 'company': user['company'], 'role': user['role'],
+            'access': user['access'], 'impersonating': bool(user.get('impersonated_by')), 'features': switches}
 
 
 def section_user(request, section):
@@ -204,8 +228,9 @@ class ChangeSet(BaseModel):
 
 @app.post('/api/state/changes')
 def save_changes(body: ChangeSet, request: Request):
-    return inventory.save(account(request)['id'], body.revision, catalogue=body.catalogue, changes=body.changes,
-                          order=body.order, batch=body.batch, parts=body.parts)
+    user = account(request)
+    return inventory.save(user['id'], body.revision, catalogue=body.catalogue, changes=body.changes,
+                          order=body.order, batch=body.batch, parts=body.parts, by=acting_as(user))
 
 
 class Save(BaseModel):
@@ -215,7 +240,8 @@ class Save(BaseModel):
 
 @app.put('/api/state')
 def put_state(body: Save, request: Request):
-    return inventory.save(account(request)['id'], body.revision, full=body.state)
+    user = account(request)
+    return inventory.save(user['id'], body.revision, full=body.state, by=acting_as(user))
 
 
 class Start(BaseModel):
@@ -224,14 +250,15 @@ class Start(BaseModel):
 
 @app.post('/api/initialize')
 def start(body: Start, request: Request):
-    user = account(request)['id']
+    person = account(request)
+    user = person['id']
     state = json.loads((ROOT / 'seed.json').read_text(encoding='utf8'))
     if body.mode == 'empty':
         for k in ('SITES', 'PROCS', 'LINES', 'MACH', 'BIZ', 'REC', 'MOV', 'WASTECAT', 'demoRecordIds', 'demoMovementIds'):
             state[k] = []
         state['PLACES'] = {}
         state['PERIODS'] = [datetime.now(timezone.utc).strftime('%Y-%m')]
-    inventory.save(user, 0, 'initialize_'+body.mode, full=state)
+    inventory.save(user, 0, 'initialize_'+body.mode, full=state, by=acting_as(person))
     return inventory.load(user)
 
 
@@ -281,7 +308,7 @@ class CloseYear(BaseModel):
 
 
 def acting_as(user):
-    return 'Administrador de Invenzis' if user.get('impersonated_by') else user['username']
+    return user['username']  # IMPERSONATOR when an administrator works inside the account
 
 
 @app.post('/api/closures')
@@ -400,7 +427,7 @@ def records(request: Request, year: int | None = None, site: str | None = None, 
 def audit(request: Request):
     user = account(request)['id']
     with db(user) as s:
-        rows = s.execute('SELECT action,revision,created,details FROM carbon_events WHERE account=? ORDER BY created DESC LIMIT 100', (user,)).fetchall()
+        rows = s.execute('SELECT action,revision,created,details,actor FROM carbon_events WHERE account=? ORDER BY created DESC LIMIT 100', (user,)).fetchall()
     return [dict(r, details=decode(r['details'])) for r in rows]
 
 
@@ -479,6 +506,7 @@ def admin_list_accounts(request: Request):
     require_admin(request)
     with db(SYSTEM) as s:
         rows = s.execute('SELECT a.id,a.username,a.company,a.role,a.active,a.created,st.updated,'
+                         '(SELECT COUNT(*) FROM carbon_users u WHERE u.account=a.id AND u.active) AS users,'
                          '(SELECT COUNT(*) FROM carbon_records r WHERE r.account=a.id) AS records FROM carbon_accounts a '
                          'LEFT JOIN carbon_states st ON st.account=a.id ORDER BY a.created DESC, a.username').fetchall()
     return [dict(r) for r in rows]
@@ -492,30 +520,20 @@ class AdminAccountCreate(BaseModel):
 @app.post('/api/admin/accounts')
 def admin_create_account(body: AdminAccountCreate, request: Request):
     admin = require_admin(request)
-    name = body.username.strip().lower()
     company = body.company.strip()
-    password = secrets.token_urlsafe(12)
-    account_id = str(uuid.uuid4())
     with db(SYSTEM) as s:
-        if s.execute('SELECT id FROM carbon_accounts WHERE username=?', (name,)).fetchone():
-            raise HTTPException(409, 'Ya existe una cuenta con ese usuario.')
-        s.execute('INSERT INTO carbon_accounts (id,username,company,password,role,active,created) VALUES (?,?,?,?,?,?,?)',
-                  (account_id, name, company, hash_password(password), 'client', True, datetime.now(timezone.utc).isoformat()))
-        event(s, admin['id'], 'admin_create_account', 0, {'target': account_id, 'username': name, 'company': company})
+        account_id, name, password = users.create_account(s, body.username, company)
+        event(s, admin['id'], 'admin_create_account', 0, {'target': account_id, 'username': name, 'company': company}, admin['username'])
     return {'id': account_id, 'username': name, 'company': company, 'password': password}
 
 
 @app.post('/api/admin/accounts/{account_id}/reset-password')
 def admin_reset_password(account_id: str, request: Request):
+    """The password of the account's first user (its id is the account's); other users have their own."""
     admin = require_admin(request)
-    password = secrets.token_urlsafe(12)
     with db(SYSTEM) as s:
-        target = s.execute('SELECT id,username FROM carbon_accounts WHERE id=?', (account_id,)).fetchone()
-        if not target:
-            raise HTTPException(404, 'Cuenta no encontrada.')
-        s.execute('UPDATE carbon_accounts SET password=? WHERE id=?', (hash_password(password), account_id))
-        s.execute('DELETE FROM carbon_sessions WHERE account=?', (account_id,))
-        event(s, admin['id'], 'admin_reset_password', 0, {'target': account_id, 'username': target['username']})
+        username, password = users.reset_password(s, account_id, account_id)
+        event(s, admin['id'], 'admin_reset_password', 0, {'target': account_id, 'username': username}, admin['username'])
     return {'password': password}
 
 
@@ -535,7 +553,7 @@ def admin_set_active(account_id: str, body: AdminSetActive, request: Request):
         s.execute('UPDATE carbon_accounts SET active=? WHERE id=?', (body.active, account_id))
         if not body.active:
             s.execute('DELETE FROM carbon_sessions WHERE account=?', (account_id,))
-        event(s, admin['id'], 'admin_set_active', 0, {'target': account_id, 'username': target['username'], 'active': body.active})
+        event(s, admin['id'], 'admin_set_active', 0, {'target': account_id, 'username': target['username'], 'active': body.active}, admin['username'])
     return {'ok': True}
 
 
@@ -565,7 +583,7 @@ def admin_put_settings(account_id: str, body: AdminSettings, request: Request):
     with db(SYSTEM) as s:
         target = admin_target(s, account_id)
         current = features.update(s, account_id, body.model_dump())
-        event(s, admin['id'], 'admin_settings', 0, {'target': account_id, 'username': target['username'], **body.model_dump()})
+        event(s, admin['id'], 'admin_settings', 0, {'target': account_id, 'username': target['username'], **body.model_dump()}, admin['username'])
     return features.catalogue(current)
 
 
@@ -576,7 +594,7 @@ def admin_create_token(account_id: str, body: TokenCreate, request: Request):
         target = admin_target(s, account_id)
         features.require(s, account_id, 'integrations', 'hub', 'Activá primero la integración con IVZ Sustainability Hub.')
         token = new_token(s, account_id, body.label)
-        event(s, admin['id'], 'admin_create_token', 0, {'target': account_id, 'username': target['username'], 'label': body.label.strip()})
+        event(s, admin['id'], 'admin_create_token', 0, {'target': account_id, 'username': target['username'], 'label': body.label.strip()}, admin['username'])
     return {'token': token}
 
 
@@ -586,8 +604,92 @@ def admin_revoke_token(account_id: str, token_id: str, request: Request):
     with db(SYSTEM) as s:
         target = admin_target(s, account_id)
         s.execute('DELETE FROM carbon_api_tokens WHERE id=? AND account=?', (token_id, account_id))
-        event(s, admin['id'], 'admin_revoke_token', 0, {'target': account_id, 'username': target['username']})
+        event(s, admin['id'], 'admin_revoke_token', 0, {'target': account_id, 'username': target['username']}, admin['username'])
     return {'ok': True}
+
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=1, max_length=150)
+    role: Literal['admin', 'editor', 'viewer']
+
+
+class UserChange(BaseModel):
+    role: Literal['admin', 'editor', 'viewer'] | None = None
+    active: bool | None = None
+
+
+# Users of the signed-in company, managed by its own administrators (backend/users.py).
+@app.get('/api/users')
+def list_users(request: Request):
+    user = company_admin(request)
+    with db(user['id']) as s:
+        return users.listing(s, user['id'])
+
+
+@app.post('/api/users')
+def create_user(body: UserCreate, request: Request):
+    user = company_admin(request)
+    with db(user['id']) as s:
+        created, password = users.add(s, user['id'], body.username, body.role)
+        event(s, user['id'], 'create_user', 0, {'username': created['username'], 'role': body.role}, acting_as(user))
+    return {**created, 'password': password}
+
+
+@app.put('/api/users/{user_id}')
+def change_user(user_id: str, body: UserChange, request: Request):
+    user = company_admin(request)
+    with db(user['id']) as s:
+        changed = users.update(s, user['id'], user_id, body.role, body.active)
+        event(s, user['id'], 'change_user', 0, changed, acting_as(user))
+    return changed
+
+
+@app.post('/api/users/{user_id}/reset-password')
+def reset_user_password(user_id: str, request: Request):
+    user = company_admin(request)
+    with db(user['id']) as s:
+        username, password = users.reset_password(s, user['id'], user_id)
+        event(s, user['id'], 'reset_password', 0, {'username': username}, acting_as(user))
+    return {'password': password}
+
+
+# The same, for Invenzis' administrator on any client.
+@app.get('/api/admin/accounts/{account_id}/users')
+def admin_list_users(account_id: str, request: Request):
+    require_admin(request)
+    with db(SYSTEM) as s:
+        admin_target(s, account_id)
+        return users.listing(s, account_id)
+
+
+@app.post('/api/admin/accounts/{account_id}/users')
+def admin_create_user(account_id: str, body: UserCreate, request: Request):
+    admin = require_admin(request)
+    with db(SYSTEM) as s:
+        admin_target(s, account_id)
+        created, password = users.add(s, account_id, body.username, body.role)
+        event(s, admin['id'], 'admin_create_user', 0, {'target': account_id, 'username': created['username'], 'role': body.role}, admin['username'])
+    return {**created, 'password': password}
+
+
+@app.put('/api/admin/accounts/{account_id}/users/{user_id}')
+def admin_change_user(account_id: str, user_id: str, body: UserChange, request: Request):
+    admin = require_admin(request)
+    with db(SYSTEM) as s:
+        admin_target(s, account_id)
+        changed = users.update(s, account_id, user_id, body.role, body.active)
+        event(s, admin['id'], 'admin_change_user', 0, {'target': account_id, **changed}, admin['username'])
+    return changed
+
+
+@app.post('/api/admin/accounts/{account_id}/users/{user_id}/reset-password')
+def admin_reset_user_password(account_id: str, user_id: str, request: Request):
+    admin = require_admin(request)
+    with db(SYSTEM) as s:
+        admin_target(s, account_id)
+        username, password = users.reset_password(s, account_id, user_id)
+        event(s, admin['id'], 'admin_reset_password', 0, {'target': account_id, 'username': username}, admin['username'])
+    return {'password': password}
 
 
 @app.post('/api/admin/accounts/{account_id}/impersonate')
@@ -600,7 +702,7 @@ def admin_impersonate(account_id: str, request: Request, response: Response):
         token = secrets.token_urlsafe(32)
         s.execute('INSERT INTO carbon_sessions (token,account,expires,impersonated_by) VALUES (?,?,?,?)',
                   (token_hash(token), account_id, time.time()+28800, admin['id']))
-        event(s, admin['id'], 'admin_impersonate', 0, {'target': account_id, 'username': target['username']})
+        event(s, admin['id'], 'admin_impersonate', 0, {'target': account_id, 'username': target['username']}, admin['username'])
     secure = os.getenv('CARBON_ENV') == 'production' or bool(os.getenv('VERCEL'))
     response.set_cookie('ivz_carbon_admin_return', request.cookies.get('ivz_carbon_session', ''),
                         httponly=True, samesite='strict', secure=secure, max_age=28800)
@@ -614,7 +716,8 @@ def admin_return(request: Request, response: Response):
     if not return_token:
         raise HTTPException(400, 'No hay una sesión de administrador para volver.')
     with db(SYSTEM) as s:
-        row = s.execute('SELECT a.id,a.role FROM carbon_accounts a JOIN carbon_sessions t ON t.account=a.id WHERE t.token=? AND t.expires>?',
+        row = s.execute("SELECT a.id,a.role FROM carbon_accounts a JOIN carbon_sessions t ON t.account=a.id JOIN carbon_users u ON u.id=t.user_id "
+                        "WHERE t.token=? AND t.expires>? AND a.active AND u.active AND u.role='admin'",
                         (token_hash(return_token), time.time())).fetchone()
     if not row or row['role'] != 'admin':
         response.delete_cookie('ivz_carbon_admin_return')
@@ -660,6 +763,11 @@ def admin_page(request: Request):
 def bridge(request: Request):
     account(request)
     return FileResponse(ROOT / 'static/bridge.js', media_type='text/javascript')
+
+
+@app.get('/users-ui.js')
+def users_ui():
+    return FileResponse(ROOT / 'static/users-ui.js', media_type='text/javascript', headers={'Cache-Control': 'no-store, max-age=0'})
 
 
 @app.get('/globe.js')

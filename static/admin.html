@@ -67,7 +67,7 @@ dialog::backdrop{background:#0004}
     <div class="card-h"><h2>Nueva cuenta de cliente</h2></div>
     <div class="card-b">
       <form id="createForm" class="form2">
-        <div><label>Usuario</label><input name="username" required maxlength="150" placeholder="ej.: acme"></div>
+        <div><label>Primer usuario (administrador de la empresa)</label><input name="username" required maxlength="150" placeholder="ej.: acme"></div>
         <div><label>Empresa</label><input name="company" required maxlength="200" placeholder="ej.: ACME S.A."></div>
         <button class="primary" type="submit">Crear cuenta</button>
       </form>
@@ -77,7 +77,7 @@ dialog::backdrop{background:#0004}
   <div class="card">
     <div class="card-h"><h2>Cuentas</h2><span class="sub" id="count"></span></div>
     <div class="card-b" style="padding:0;overflow-x:auto">
-      <table style="min-width:720px"><thead><tr><th>Usuario</th><th>Empresa</th><th>Rol</th><th>Estado</th><th>Última actividad</th><th>Registros</th><th></th></tr></thead>
+      <table style="min-width:720px"><thead><tr><th>Primer usuario</th><th>Empresa</th><th>Usuarios</th><th>Rol</th><th>Estado</th><th>Última actividad</th><th>Registros</th><th></th></tr></thead>
         <tbody id="rows"></tbody></table>
     </div>
   </div>
@@ -85,6 +85,7 @@ dialog::backdrop{background:#0004}
 <dialog id="cfgDialog"><div class="dlg-b" style="padding-bottom:6px"><h3 id="cfgTitle">Configuración</h3><div class="sub" style="color:var(--muted);font-size:13px">Lo que se apaga desaparece del menú del cliente y queda bloqueado en el servidor. Los datos no se borran: al volver a encenderlo, todo sigue ahí.</div></div>
   <div class="cfg-b" id="cfgBody"></div>
   <div class="dlg-f"><p id="cfgErr" style="flex:1;margin:0"></p><button class="primary" id="cfgClose">Listo</button></div></dialog>
+<script src="/users-ui.js?v=20260925-users"></script>
 <dialog id="pwDialog"><div class="dlg-b"><h3 id="pwTitle"></h3><p>Copiala ahora — no se va a poder ver de nuevo.</p><div class="pw" id="pwValue"></div></div><div class="dlg-f"><button id="pwCopy">Copiar</button><button class="primary" id="pwClose">Listo</button></div></dialog>
 <script>
 async function api(path,options={}){
@@ -111,6 +112,7 @@ async function loadAccounts(){
     <tr>
       <td>${esc(r.username)}</td>
       <td>${esc(r.company)}</td>
+      <td>${Number(r.users||0)}</td>
       <td><span class="pill ${r.role}">${r.role==='admin'?'Admin':'Cliente'}</span></td>
       <td>${r.active?'Activa':'<span class=\"pill inactive\">Desactivada</span>'}</td>
       <td>${esc((r.updated||r.created||'').slice(0,10)||'—')}</td>
@@ -118,10 +120,10 @@ async function loadAccounts(){
       <td><div class="row-actions">
         ${r.role!=='admin'?`<button data-act="config" data-id="${r.id}" data-name="${esc(r.company)}">Configurar</button>`:''}
         ${r.role!=='admin'?`<button data-act="login" data-id="${r.id}" data-name="${esc(r.company)}">Entrar como</button>`:''}
-        <button data-act="reset" data-id="${r.id}" data-user="${esc(r.username)}">Resetear contraseña</button>
+        ${r.role==='admin'?`<button data-act="reset" data-id="${r.id}" data-user="${esc(r.username)}">Resetear contraseña</button>`:''}
         <button class="${r.active?'danger':''}" data-act="toggle" data-id="${r.id}" data-active="${r.active?1:0}">${r.active?'Desactivar':'Reactivar'}</button>
       </div></td>
-    </tr>`).join(''):'<tr><td colspan="7" class="empty">Todavía no hay cuentas de clientes.</td></tr>';
+    </tr>`).join(''):'<tr><td colspan="8" class="empty">Todavía no hay cuentas de clientes.</td></tr>';
 }
 document.getElementById('rows').addEventListener('click',async e=>{
   const b=e.target.closest('button[data-act]'); if(!b) return;
@@ -152,7 +154,7 @@ const toggle=(kind,key,on)=>`<button type="button" class="sw ${on?'on':''}" role
 function renderConfig(){
   const groups=[...new Set(cfg.sections.map(s=>s.group))];
   const hub=cfg.integrations.find(i=>i.native);
-  cfgBody.innerHTML=`<h4>Secciones visibles</h4>
+  document.getElementById('cfgMain').innerHTML=`<h4>Secciones visibles</h4>
     <div class="cfg-row"><div class="l">Panel ejecutivo<small>Siempre visible</small></div>${toggle('','',true).replace('<button','<button disabled')}</div>
     ${groups.map(g=>cfg.sections.filter(s=>s.group===g).map(s=>`<div class="cfg-row"><div class="l">${esc(s.label)}<small>${esc(g)}${s.default?'':' · apagada por defecto'}</small></div>${toggle('sections',s.key,s.on)}</div>`).join('')).join('')}
     <h4>Integraciones</h4>
@@ -163,7 +165,10 @@ function renderConfig(){
 async function openConfig(id,name){
   cfg=await api('/api/admin/accounts/'+id+'/settings'); cfg.id=id; cfgErr.textContent='';
   document.getElementById('cfgTitle').textContent='Configuración de '+name;
+  // The users keep their own box: switching a section on or off does not redraw them.
+  cfgBody.innerHTML='<h4>Usuarios</h4><div id="cfgUsers"></div><div id="cfgMain"></div>';
   renderConfig(); document.getElementById('cfgDialog').showModal();
+  IVZUsers.mount(document.getElementById('cfgUsers'),{base:'/api/admin/accounts/'+encodeURIComponent(id)+'/users',headers:{'X-IVZ-Carbon':'1'}});
 }
 cfgBody.addEventListener('click',async e=>{
   const sw=e.target.closest('.sw[data-kind]'), revoke=e.target.closest('[data-revoke]'), mint=e.target.closest('[data-newtoken]');

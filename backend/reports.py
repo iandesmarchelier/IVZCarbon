@@ -61,7 +61,7 @@ def approve(user, report_id):
             raise HTTPException(422,'Antes de aprobar, generá una nueva versión sin datos demo ni asignaciones pendientes y completá los campos descriptivos (podés justificar los que no aplican). Pendientes: '+', '.join(missing))
         report.update(approvedAt=datetime.now(timezone.utc).isoformat(),approvedBy=user['username'])
         s.execute('UPDATE carbon_reports SET body=? WHERE account=? AND id=?',(s.json(report),user['id'],report_id))
-        event(s,user['id'],'approve_report',report['revision'],{'report':report_id})
+        event(s,user['id'],'approve_report',report['revision'],{'report':report_id},user['username'])
     return report
 
 def create(user, request):
@@ -134,7 +134,7 @@ def create(user, request):
             generatedBy=user['username'], version=1, uncertaintyBasis=uncertainty_basis)
         s.execute('INSERT INTO carbon_reports (id,account,year,created,body) VALUES (?,?,?,?,?)',
             (report['id'],user['id'],request.year,report['created'],s.json(report)))
-        event(s,user['id'],'generate_report',row['revision'],{'report':report['id'],'year':request.year,'site':request.site})
+        event(s,user['id'],'generate_report',row['revision'],{'report':report['id'],'year':request.year,'site':request.site},user['username'])
     return report
 
 def e(value): return escape(str(value), quote=True)

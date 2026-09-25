@@ -50,9 +50,10 @@ def decode(value):
     return json.loads(value) if isinstance(value, str) else value
 
 
-def event(s, user, action, revision, details):
-    s.execute('INSERT INTO carbon_events VALUES (?,?,?,?,?,?)',
-              (str(uuid.uuid4()), user, action, revision, datetime.now(timezone.utc).isoformat(), s.json(details)))
+def event(s, user, action, revision, details, actor=None):
+    """user is the account; actor, who did it (a user of the account, or an administrator)."""
+    s.execute('INSERT INTO carbon_events (id,account,action,revision,created,details,actor) VALUES (?,?,?,?,?,?,?)',
+              (str(uuid.uuid4()), user, action, revision, datetime.now(timezone.utc).isoformat(), s.json(details), actor))
 
 
 @contextmanager
@@ -146,6 +147,9 @@ def initialize():
             # Uploaded bills and manifests (backend/documents.py).
             f"CREATE TABLE IF NOT EXISTS carbon_documents (id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, name TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created DOUBLE PRECISION NOT NULL, linked BOOLEAN NOT NULL DEFAULT FALSE, data {'BYTEA' if s.postgres else 'BLOB'} NOT NULL)",
             'CREATE INDEX IF NOT EXISTS carbon_documents_account ON carbon_documents(account,linked)',
+            # The people who sign in to each account (backend/users.py).
+            'CREATE TABLE IF NOT EXISTS carbon_users (id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES carbon_accounts(id) ON DELETE CASCADE, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE, created TEXT NOT NULL)',
+            'CREATE INDEX IF NOT EXISTS carbon_users_account ON carbon_users(account)',
             'CREATE INDEX IF NOT EXISTS carbon_records_filter ON carbon_records(account,period,site,scope)',
             'CREATE INDEX IF NOT EXISTS carbon_api_tokens_account ON carbon_api_tokens(account)',
             'CREATE INDEX IF NOT EXISTS carbon_sessions_expiry ON carbon_sessions(expires)',
@@ -159,6 +163,14 @@ def initialize():
         # Sections and integrations an administrator switched on or off for the account (backend/features.py).
         _ensure_column(s, 'carbon_accounts', 'settings', "settings TEXT NOT NULL DEFAULT '{}'")
         _ensure_column(s, 'carbon_sessions', 'impersonated_by', 'impersonated_by TEXT')
+        _ensure_column(s, 'carbon_sessions', 'user_id', 'user_id TEXT')
+        _ensure_column(s, 'carbon_events', 'actor', 'actor TEXT')
+        # Accounts from before users existed: their login becomes the first administrator, with the
+        # account's id, and their open sessions belong to it. Users are never deleted, so this adds
+        # nothing once done.
+        s.execute("INSERT INTO carbon_users (id,account,username,password,role,active,created) "
+                  "SELECT id,id,username,password,'admin',TRUE,created FROM carbon_accounts WHERE TRUE ON CONFLICT DO NOTHING")
+        s.execute('UPDATE carbon_sessions SET user_id=account WHERE user_id IS NULL AND impersonated_by IS NULL')
         # Row order inside the inventory: records and movements are stored as rows, not inside the state body.
         _ensure_column(s, 'carbon_records', 'seq', 'seq INTEGER')
         _ensure_column(s, 'carbon_entities', 'seq', 'seq INTEGER')

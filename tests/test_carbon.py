@@ -584,6 +584,101 @@ class ApiTests(unittest.TestCase):
         self.login('two')
         self.assertEqual(self.client.get('/api/documents/'+kept).status_code,404)
 
+    def login_as(self,username,password):
+        self.client.cookies.clear()
+        return self.client.post('/api/login',headers=self.h,json={'username':username,'password':password})
+
+    def test_a_company_has_several_users_with_roles(self):
+        self.login(); body=self.initialize()
+        me=self.client.get('/api/me').json()
+        self.assertEqual((me['username'],me['access']),('one','admin'))
+        made={}
+        for name,role in (('ana','editor'),('luis','viewer')):
+            r=self.client.post('/api/users',headers=self.h,json={'username':' '+name.upper(),'role':role})
+            self.assertEqual(r.status_code,200,r.text); made[name]=r.json()
+        self.assertEqual(self.client.post('/api/users',headers=self.h,json={'username':'two','role':'viewer'}).status_code,409)  # another company's
+        self.assertEqual([u['username'] for u in self.client.get('/api/users').json()],['one','ana','luis'])
+        # Both work on the company's inventory; the editor saves, the viewer only reads.
+        self.assertEqual(self.login_as('ana',made['ana']['password']).status_code,200)
+        self.assertEqual(self.client.get('/api/me').json()['company'],'Empresa uno')
+        body['state']['SITES'][0]['name']='Planta renombrada'
+        self.assertEqual(self.client.put('/api/state',headers=self.h,json=body).status_code,200)
+        self.assertEqual(self.client.get('/api/users').status_code,403)
+        self.assertEqual(self.login_as('luis',made['luis']['password']).status_code,200)
+        state=self.client.get('/api/state').json()
+        self.assertEqual(state['state']['SITES'][0]['name'],'Planta renombrada')
+        self.assertEqual(self.client.get('/api/records?limit=1').status_code,200)
+        self.assertEqual(self.client.get('/api/inventory.csv').status_code,200)
+        for method,path,payload in (('put','/api/state',state),('post','/api/closures',{'year':2025}),('post','/api/initialize',{'mode':'empty'}),
+                                    ('post','/api/reports',{'year':2025}),('post','/api/tokens',{'label':'x'})):
+            with self.subTest(path=path):
+                r=getattr(self.client,method)(path,headers=self.h,json=payload)
+                self.assertEqual((r.status_code,r.json()['detail']),(403,'Tu usuario es de solo lectura.'))
+        self.assertEqual(self.client.post('/api/logout',headers=self.h).status_code,200)
+        # Who did what is recorded per user.
+        self.login()
+        self.assertIn(('save','ana'),[(e['action'],e['actor']) for e in self.client.get('/api/audit').json()])
+
+    def test_a_company_keeps_an_active_admin_and_switched_off_users_are_out(self):
+        self.login(); one=self.client.get('/api/me').json()['id']
+        ana=self.client.post('/api/users',headers=self.h,json={'username':'ana','role':'editor'}).json()
+        for change in ({'role':'editor'},{'active':False}):
+            self.assertEqual(self.client.put('/api/users/'+one,headers=self.h,json=change).status_code,409)
+        self.assertEqual(self.client.put('/api/users/'+ana['id'],headers=self.h,json={'role':'admin'}).status_code,200)
+        self.assertEqual(self.client.put('/api/users/'+one,headers=self.h,json={'role':'viewer'}).json()['role'],'viewer')
+        self.assertEqual(self.client.put('/api/users/'+ana['id'],headers=self.h,json={'role':'editor'}).status_code,403)  # now a viewer
+        self.assertEqual(self.login_as('ana',ana['password']).status_code,200)
+        luis=self.client.post('/api/users',headers=self.h,json={'username':'luis','role':'editor'}).json()
+        other=TestClient(app); other.post('/api/login',headers=self.h,json={'username':'luis','password':luis['password']})
+        self.assertEqual(other.get('/api/me').status_code,200)
+        self.assertEqual(self.client.put('/api/users/'+luis['id'],headers=self.h,json={'active':False}).status_code,200)
+        self.assertEqual(other.get('/api/me').status_code,401)
+        self.assertEqual(self.login_as('luis',luis['password']).status_code,403)
+        self.login_as('ana',ana['password'])
+        self.client.put('/api/users/'+luis['id'],headers=self.h,json={'active':True})
+        fresh=self.client.post('/api/users/'+luis['id']+'/reset-password',headers=self.h).json()['password']
+        self.assertEqual(self.login_as('luis',luis['password']).status_code,401)
+        self.assertEqual(self.login_as('luis',fresh).status_code,200)
+        # A company never reaches the users of another one.
+        self.login('two')
+        self.assertEqual(self.client.put('/api/users/'+luis['id'],headers=self.h,json={'active':False}).status_code,404)
+        self.assertEqual(self.client.post('/api/users/'+one+'/reset-password',headers=self.h).status_code,404)
+        self.assertEqual([u['username'] for u in self.client.get('/api/users').json()],['two'])
+
+    def test_invenzis_admin_manages_the_users_of_a_client(self):
+        with db(SYSTEM) as s:
+            s.execute("UPDATE carbon_accounts SET role='admin' WHERE username='two'")
+            one=s.execute("SELECT id FROM carbon_accounts WHERE username='one'").fetchone()['id']
+        self.login()
+        self.assertEqual(self.client.get('/api/admin/accounts/'+one+'/users').status_code,403)
+        self.login('two')
+        base='/api/admin/accounts/'+one+'/users'
+        ana=self.client.post(base,headers=self.h,json={'username':'ana','role':'viewer'}).json()
+        self.assertEqual(self.client.put(base+'/'+ana['id'],headers=self.h,json={'role':'editor'}).json()['role'],'editor')
+        self.assertEqual(self.client.put(base+'/'+one,headers=self.h,json={'active':False}).status_code,409)
+        fresh=self.client.post(base+'/'+ana['id']+'/reset-password',headers=self.h).json()['password']
+        self.assertEqual({r['username']:r['users'] for r in self.client.get('/api/admin/accounts').json()}['one'],2)
+        self.assertEqual(self.client.post('/api/admin/accounts/'+one+'/impersonate',headers=self.h).status_code,200)
+        me=self.client.get('/api/me').json()
+        self.assertEqual((me['username'],me['access'],me['impersonating']),('Administrador de Invenzis','admin',True))
+        self.assertEqual(len(self.client.get('/api/users').json()),2)
+        self.assertEqual(self.login_as('ana',fresh).status_code,200)
+        self.assertEqual(self.client.get('/api/admin/accounts').status_code,403)
+
+    def test_accounts_from_before_users_keep_their_login_and_sessions(self):
+        from backend.storage import initialize
+        from backend.security import token_hash
+        with db(SYSTEM) as s:
+            s.execute("INSERT INTO carbon_accounts (id,username,company,password,created) VALUES ('old','legacy','Vieja',?,'2026-01-01')",(hash_password('test-password-123'),))
+            s.execute('INSERT INTO carbon_sessions (token,account,expires) VALUES (?,?,?)',(token_hash('open-session'),'old',9e9))
+        initialize(); initialize()
+        with db(SYSTEM) as s:
+            self.assertEqual([dict(r) for r in s.execute("SELECT id,account,username,role FROM carbon_users WHERE account='old'").fetchall()],
+                             [{'id':'old','account':'old','username':'legacy','role':'admin'}])
+        self.client.cookies.set('ivz_carbon_session','open-session')
+        self.assertEqual(self.client.get('/api/me').json()['username'],'legacy')
+        self.assertEqual(self.login_as('legacy','test-password-123').status_code,200)
+
     def test_every_connection_names_its_account(self):
         with self.assertRaises(TypeError), db():pass
         for bad in ('', None, 7):

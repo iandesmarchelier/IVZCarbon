@@ -195,7 +195,7 @@ def _sync(s, user, kind, old, new):
     return len(changed) + len(removed)
 
 
-def save(user, revision, action='save', full=None, catalogue=None, changes=None, order=None, batch=None, parts=0):
+def save(user, revision, action='save', full=None, catalogue=None, changes=None, order=None, batch=None, parts=0, by=None):
     """Save a complete inventory (full) or a change set, validated as a whole. Returns revision and summary."""
     changes = changes or {}
     order = order or {}
@@ -252,7 +252,7 @@ def save(user, revision, action='save', full=None, catalogue=None, changes=None,
                           [(user, kind, item['id'], s.json(item), i) for kind in CATALOGUE_KINDS for i, item in enumerate(new_body[kind])])
         written = {kind: _sync(s, user, kind, old[kind], state[kind]) for kind in ROWS}
         documents.link(s, user, state['REC'])
-        event(s, user, action, current + 1, {'records': len(state['REC']), 'kg': summary['kg'], 'written': written})
+        event(s, user, action, current + 1, {'records': len(state['REC']), 'kg': summary['kg'], 'written': written}, by)
     return {'revision': current + 1, 'updated': updated, 'summary': summary}
 
 
@@ -311,7 +311,7 @@ def close_year(user, year, by):
         results = compute(normalize(state), year)
         s.execute('INSERT INTO carbon_closures (account,year,closed_at,closed_by,results,factors,sites) VALUES (?,?,?,?,?,?,?)',
                   (user, year, now, by, s.json(results), s.json(body['FACTORS']), s.json(body['SITES'])))
-        event(s, user, 'close_year', row['revision'], {'year': year, 'by': by, 'tCO2e': results['tCO2e'], 'records': results['count']})
+        event(s, user, 'close_year', row['revision'], {'year': year, 'by': by, 'tCO2e': results['tCO2e'], 'records': results['count']}, by)
     return {'year': year, 'closedAt': now, 'closedBy': by, 'tCO2e': results['tCO2e']}
 
 
@@ -323,7 +323,7 @@ def reopen_year(user, year, by, reason):
             raise HTTPException(404, f'El año {year} no está cerrado.')
         s.execute('DELETE FROM carbon_closures WHERE account=? AND year=?', (user, year))
         # The event keeps what the year said while it was closed.
-        event(s, user, 'reopen_year', row['revision'], {'year': year, 'by': by, 'reason': reason, 'closedResults': decode(closure['results'])})
+        event(s, user, 'reopen_year', row['revision'], {'year': year, 'by': by, 'reason': reason, 'closedResults': decode(closure['results'])}, by)
     return {'ok': True}
 
 
