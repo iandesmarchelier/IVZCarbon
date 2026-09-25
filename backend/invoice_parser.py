@@ -144,6 +144,11 @@ def parse_electricity(text):
         m = _search(r'Per[ií]odo de consumo:?\s*\d{2}/\d{2}/\d{4}\s*AL\s*(\d{2}/\d{2}/\d{4})', flat)
         if m:
             fields['period'] = _ddmmyyyy_to_period(m.group(1)); confidence['period'] = 'high'
+        else:
+            # Con OCR (foto o escaneo) una letra mal leída en el rótulo deja afuera la regla exacta.
+            m = _search(r'(\d{2}/\d{2}/\d{4}).{1,15}?(\d{2}/\d{2}/\d{4})', flat)
+            if m:
+                fields['period'] = _ddmmyyyy_to_period(m.group(2)); confidence['period'] = 'low'
         m = _search(r'Liquidaci[oó]n de Servicio P[uú]blico N[°ºo]\.?\s*([\d-]+)', flat)
         if m:
             fields['doc'] = m.group(1); confidence['doc'] = 'high'

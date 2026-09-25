@@ -18,7 +18,7 @@ from backend.metrics import compute, normalize
 from backend.storage import SYSTEM, db, database_url, decode
 from backend.security import hash_password, verify_password
 from backend import features, matching
-from backend.invoice_parser import ocr_engine, parse_document
+from backend.invoice_parser import extract_text, ocr_engine, parse_document
 from backend.storage import Session
 
 SEED = json.loads((ROOT/'seed.json').read_text(encoding='utf8'))
@@ -145,6 +145,10 @@ class DocumentReadingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_document(b'', 'x.pdf', 'other')
 
+    def test_ocr_misread_label_still_finds_the_period(self):
+        bill = self.read(self.BILL.replace('Período de consumo', 'Perlodo de consumo'), 'ocr')
+        self.assertEqual((bill['fields']['period'], bill['confidence']['period']), ('2025-08', 'low'))
+
     @unittest.skipIf(ocr_engine() == 'off', 'Tesseract no está instalado (sí en el contenedor)')
     def test_photographed_bill_is_read_with_tesseract(self):
         from PIL import Image, ImageDraw, ImageFont
@@ -154,7 +158,8 @@ class DocumentReadingTests(unittest.TestCase):
         image.save(photo, 'PNG')
         bill = parse_document(photo.getvalue(), 'factura.png', 'auto')
         self.assertEqual(ocr_engine(), 'tesseract-spa')
-        self.assertEqual((bill['kind'], bill['fields']['period'], bill['fields']['qty']), ('elec', '2025-08', 16814.84))
+        text, _ = extract_text(photo.getvalue(), 'factura.png')
+        self.assertEqual((bill['kind'], bill['fields']['period'], bill['fields']['qty']), ('elec', '2025-08', 16814.84), msg=f'Texto leído por OCR:\n{text}')
 
 
 class ApiTests(unittest.TestCase):
